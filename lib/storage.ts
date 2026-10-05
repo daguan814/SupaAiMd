@@ -302,10 +302,7 @@ export async function putAnnotation(
   expectedAnnotations: string,
 ) {
   const note = await read(relative);
-  if (
-    note.hash !== expected ||
-    note.annotationsHash !== expectedAnnotations
-  )
+  if (note.hash !== expected || note.annotationsHash !== expectedAnnotations)
     throw new UserError("标注或正文已在其他窗口更新，请重新打开笔记", 409);
   const label = typeof input.label === "string" ? input.label.trim() : "";
   if (
@@ -315,12 +312,13 @@ export async function putAnnotation(
     !note.content.includes(input.quote)
   )
     throw new UserError("选中的文字不在当前正文里，请重新选择");
-  if (!label || label.length > 12)
-    throw new UserError("标签需要 1 到 12 个字");
+  if (!label || label.length > 12) throw new UserError("标签需要 1 到 12 个字");
   if (
     note.annotations.some(
       (item) =>
-        item.quote === input.quote && item.id !== input.id && item.label === label,
+        item.quote === input.quote &&
+        item.id !== input.id &&
+        item.label === label,
     )
   )
     throw new UserError("这句话已经贴过同样的标签");
@@ -352,10 +350,7 @@ export async function removeAnnotation(
   expectedAnnotations: string,
 ) {
   const note = await read(relative);
-  if (
-    note.hash !== expected ||
-    note.annotationsHash !== expectedAnnotations
-  )
+  if (note.hash !== expected || note.annotationsHash !== expectedAnnotations)
     throw new UserError("标注或正文已在其他窗口更新，请重新打开笔记", 409);
   if (!note.annotations.some((item) => item.id === id))
     throw new UserError("这条标注已经不存在了", 409);
@@ -372,14 +367,14 @@ export async function putChat(
   const note = await read(relative);
   if (note.hash !== expected)
     throw new UserError("对话期间正文已更新，请重新发送", 409);
-  if (messages.length > 60)
-    throw new UserError("对话太长了，先清空再继续");
+  if (messages.length > 60) throw new UserError("对话太长了，先清空再继续");
   const now = new Date().toISOString();
   const m = await meta(relative);
   m.chat = messages.map((message) => ({
     id: randomUUID(),
     role: message.role,
     content: message.content,
+    ...(message.kind ? { kind: message.kind } : {}),
     createdAt: now,
   }));
   await atomic(metadata(relative), JSON.stringify(m));

@@ -35,6 +35,8 @@ export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** edit 表示这条消息是「让 AI 直接改正文」的往返。 */
+  kind?: "edit";
   createdAt: string;
 };
 export type GraphFeedback = {

@@ -72,6 +72,45 @@ export async function POST(request: NextRequest) {
         await store.exclusive(() => store.putChat(b.path, history, b.hash)),
       );
     }
+    if (b.action === "edit") {
+      const note = await store.read(b.path);
+      if (note.hash !== b.hash)
+        throw new store.UserError("正文已更新，请稍后重试", 409);
+      if (
+        typeof b.message !== "string" ||
+        !b.message.trim() ||
+        b.message.length > 2000
+      )
+        throw new store.UserError("请先写下要 AI 怎么改（最多 2000 字）");
+      const instruction = b.message.trim();
+      const output = await ai.edit(note.content, note.chat, instruction);
+      return NextResponse.json(
+        await store.exclusive(async () => {
+          const saved = await store.save(b.path, output.markdown, b.hash, true);
+          return store.putChat(
+            b.path,
+            [
+              ...note.chat.map(({ role, content, kind }) => ({
+                role,
+                content,
+                kind,
+              })),
+              {
+                role: "user" as const,
+                content: instruction,
+                kind: "edit" as const,
+              },
+              {
+                role: "assistant" as const,
+                content: output.summary,
+                kind: "edit" as const,
+              },
+            ],
+            saved.hash,
+          );
+        }),
+      );
+    }
     if (["polish", "graph", "revise"].includes(b.action)) {
       const note = await store.read(b.path);
       if (note.hash !== b.hash)
