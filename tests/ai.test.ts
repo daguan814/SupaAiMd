@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { complete, edit } from "../lib/ai";
+import { assist, complete } from "../lib/ai";
 
 test("润色重试无变化结果，并拒绝空白差异和不完整输出", async (t) => {
   const originalFetch = globalThis.fetch;
@@ -37,7 +37,7 @@ test("润色重试无变化结果，并拒绝空白差异和不完整输出", as
   }
 });
 
-test("让 AI 改正文：只接受完整 JSON，无改动会重试再报错", async (t) => {
+test("和 AI 对话：该改就改，只是提问就不动正文", async (t) => {
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.DEEPSEEK_API_KEY;
   process.env.DEEPSEEK_API_KEY = "test-key";
@@ -53,40 +53,54 @@ test("让 AI 改正文：只接受完整 JSON，无改动会重试再报错", as
     "| 甲 | 200 |\n| 乙 | 1000 |",
     "| 乙 | 1000 |\n| 甲 | 200 |",
   );
-  const reply = (payload: unknown, finish_reason = "stop") =>
+  const answer = (payload: unknown, finish_reason = "stop") =>
     Response.json({
       choices: [
         { message: { content: JSON.stringify(payload) }, finish_reason },
       ],
     });
   try {
-    await t.test("按指令改写，返回新正文和一句说明", async () => {
+    await t.test("要求修改时返回改好的正文", async () => {
       let calls = 0;
       globalThis.fetch = async () => {
         calls++;
-        return reply({
-          summary: "把支出按金额从大到小排序",
+        return answer({
+          changed: true,
+          reply: "已把支出按金额从大到小排序",
           markdown: changed,
         });
       };
-      const result = await edit(source, [], "支出项目按金额从大到小排");
+      const result = await assist(source, [], "支出项目按金额从大到小排");
+      assert.equal(result.changed, true);
       assert.equal(result.markdown, changed);
-      assert.equal(result.summary, "把支出按金额从大到小排序");
+      assert.equal(result.reply, "已把支出按金额从大到小排序");
       assert.equal(calls, 1);
     });
-    await t.test("两次都没改动正文就报错，不覆盖原稿", async () => {
+    await t.test("只是提问就只回答，不动正文", async () => {
+      globalThis.fetch = async () =>
+        answer({
+          changed: false,
+          reply: "这篇记的是支出和收入。",
+          markdown: "",
+        });
+      const result = await assist(source, [], "这篇在讲什么？");
+      assert.equal(result.changed, false);
+      assert.equal(result.markdown, null);
+      assert.equal(result.reply, "这篇记的是支出和收入。");
+    });
+    await t.test("说改了但正文没变，重试后仍然如此就报错", async () => {
       let calls = 0;
       globalThis.fetch = async () => {
         calls++;
-        return reply({ summary: "看起来不用改", markdown: source });
+        return answer({ changed: true, reply: "改好了", markdown: source });
       };
-      await assert.rejects(edit(source, [], "帮我看一眼"), /没有改动正文/);
+      await assert.rejects(assist(source, [], "整理一下"), /没有真的改动正文/);
       assert.equal(calls, 2);
     });
     await t.test("截断的输出不能覆盖正文", async () => {
       globalThis.fetch = async () =>
-        reply({ summary: "改好了", markdown: changed }, "length");
-      await assert.rejects(edit(source, [], "排序"), /未返回完整内容/);
+        answer({ changed: true, reply: "改好了", markdown: changed }, "length");
+      await assert.rejects(assist(source, [], "排序"), /未返回完整内容/);
     });
     await t.test("返回的不是合法 JSON 就报错", async () => {
       globalThis.fetch = async () =>
@@ -98,7 +112,7 @@ test("让 AI 改正文：只接受完整 JSON，无改动会重试再报错", as
             },
           ],
         });
-      await assert.rejects(edit(source, [], "排序"), /格式无效/);
+      await assert.rejects(assist(source, [], "排序"), /格式无效/);
     });
   } finally {
     globalThis.fetch = originalFetch;

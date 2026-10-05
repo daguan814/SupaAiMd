@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     const b = await request.json();
     if (typeof b.action !== "string" || typeof b.path !== "string")
       throw new store.UserError("请求无效");
-    if (b.action === "chat" || b.action === "clearChat") {
+    if (b.action === "assist" || b.action === "clearChat") {
       const note = await store.read(b.path);
       if (note.hash !== b.hash)
         throw new store.UserError("正文已更新，请稍后重新发送", 409);
@@ -62,52 +62,23 @@ export async function POST(request: NextRequest) {
       )
         throw new store.UserError("请先写下要对 AI 说的话（最多 2000 字）");
       const message = b.message.trim();
-      const reply = await ai.chat(note.content, note.chat, message);
+      const output = await ai.assist(note.content, note.chat, message);
+      const mark = output.changed ? { kind: "edit" as const } : {};
       const history = [
-        ...note.chat.map(({ role, content }) => ({ role, content })),
-        { role: "user" as const, content: message },
-        { role: "assistant" as const, content: reply },
+        ...note.chat.map(({ role, content, kind }) => ({
+          role,
+          content,
+          kind,
+        })),
+        { role: "user" as const, content: message, ...mark },
+        { role: "assistant" as const, content: output.reply, ...mark },
       ];
       return NextResponse.json(
-        await store.exclusive(() => store.putChat(b.path, history, b.hash)),
-      );
-    }
-    if (b.action === "edit") {
-      const note = await store.read(b.path);
-      if (note.hash !== b.hash)
-        throw new store.UserError("正文已更新，请稍后重试", 409);
-      if (
-        typeof b.message !== "string" ||
-        !b.message.trim() ||
-        b.message.length > 2000
-      )
-        throw new store.UserError("请先写下要 AI 怎么改（最多 2000 字）");
-      const instruction = b.message.trim();
-      const output = await ai.edit(note.content, note.chat, instruction);
-      return NextResponse.json(
         await store.exclusive(async () => {
-          const saved = await store.save(b.path, output.markdown, b.hash, true);
-          return store.putChat(
-            b.path,
-            [
-              ...note.chat.map(({ role, content, kind }) => ({
-                role,
-                content,
-                kind,
-              })),
-              {
-                role: "user" as const,
-                content: instruction,
-                kind: "edit" as const,
-              },
-              {
-                role: "assistant" as const,
-                content: output.summary,
-                kind: "edit" as const,
-              },
-            ],
-            saved.hash,
-          );
+          const saved = output.changed
+            ? await store.save(b.path, output.markdown!, b.hash, true)
+            : note;
+          return store.putChat(b.path, history, saved.hash);
         }),
       );
     }

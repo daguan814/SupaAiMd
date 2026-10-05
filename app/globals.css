@@ -1565,32 +1565,6 @@ body {
   border-top: 1px solid #30333b;
   padding: 12px 15px 14px;
 }
-.chat-mode {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 9px;
-  padding: 5px 10px 5px 8px;
-  border: 1px solid #3a3e49;
-  border-radius: 999px;
-  color: #98a2b4;
-  font-size: 11px;
-  cursor: pointer;
-}
-.chat-mode.on {
-  border-color: #6d7ba6;
-  color: #dfe5f5;
-  background: #2b3145;
-}
-.chat-mode input {
-  display: none;
-}
-.chat-mode-hint {
-  margin: 0 0 9px;
-  font-size: 10.5px;
-  line-height: 1.8;
-  color: #8e99ab;
-}
 .chat-badge {
   margin-left: 6px;
   padding: 1px 5px;

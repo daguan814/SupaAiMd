@@ -85,7 +85,6 @@ export default function Workspace() {
   const [instruction, setInstruction] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
-  const [chatEdit, setChatEdit] = useState(false);
   const [tagAnchor, setTagAnchor] = useState<TagAnchor | null>(null);
   const [tagMenu, setTagMenu] = useState<TagMenu | null>(null);
   const [customLabel, setCustomLabel] = useState("");
@@ -181,7 +180,6 @@ export default function Workspace() {
     setTagMenu(null);
     setEditTable(null);
     setChatInput("");
-    setChatEdit(false);
     if (window.innerWidth < 640) setSidebar(false);
   };
   const load = useCallback(async () => {
@@ -370,22 +368,21 @@ export default function Workspace() {
       setStatus("已移除标签");
     });
   const sendChat = () =>
-    run(chatEdit ? "AI 正在改这篇笔记" : "AI 正在读这篇笔记", async () => {
+    run("AI 正在读这篇笔记", async () => {
       const message = chatInput.trim();
       const n = current.current;
       if (!message || !n) return;
       await flush();
       const latest = current.current!;
-      apply(
-        await api("/api/workspace", {
-          action: chatEdit ? "edit" : "chat",
-          path: latest.path,
-          hash: latest.hash,
-          message,
-        }),
-      );
+      const next: Note = await api("/api/workspace", {
+        action: "assist",
+        path: latest.path,
+        hash: latest.hash,
+        message,
+      });
+      apply(next);
       setChatInput("");
-      if (chatEdit) setStatus("已按你的要求改好");
+      if (next.content !== latest.content) setStatus("已按你的要求改好");
     });
   const clearChat = () =>
     run("正在清空对话", async () => {
@@ -1167,9 +1164,7 @@ export default function Workspace() {
               messages={note.chat}
               busy={!!busy}
               value={chatInput}
-              editMode={chatEdit}
               onChange={setChatInput}
-              onToggleEdit={setChatEdit}
               onSend={() => void sendChat()}
               onClear={() => void clearChat()}
               onClose={() => setChatOpen(false)}

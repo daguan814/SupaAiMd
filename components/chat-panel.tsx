@@ -1,26 +1,19 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { MessageSquare, PenLine, Send, Trash2, X } from "lucide-react";
+import { MessageSquare, Send, Trash2, X } from "lucide-react";
 import type { ChatMessage } from "@/lib/types";
 
-const askSuggestions = [
+const suggestions = [
   "这篇笔记主要想说什么？",
-  "逻辑有没有跳跃或没说清的地方？",
-  "帮我起三个更准确的标题",
-];
-const editSuggestions = [
   "把表格按金额从大到小排序",
   "给每段加一个短小标题",
-  "把重复或相似的条目合并",
 ];
 
 export default function ChatPanel({
   messages,
   busy,
   value,
-  editMode,
   onChange,
-  onToggleEdit,
   onSend,
   onClear,
   onClose,
@@ -28,9 +21,7 @@ export default function ChatPanel({
   messages: ChatMessage[];
   busy: boolean;
   value: string;
-  editMode: boolean;
   onChange: (value: string) => void;
-  onToggleEdit: (value: boolean) => void;
   onSend: () => void;
   onClear: () => void;
   onClose: () => void;
@@ -72,9 +63,10 @@ export default function ChatPanel({
         {messages.length === 0 ? (
           <div className="chat-empty">
             <p>
-              AI 已经读过这篇笔记的正文，可以直接问它任何与这篇内容有关的问题。
+              AI 已经读过这篇笔记的正文。你可以问它任何与这篇内容有关的问题，
+              也可以直接让它改——说清楚要改什么，它就照做，改前的版本可以「恢复原文」退回。
             </p>
-            {(editMode ? editSuggestions : askSuggestions).map((text) => (
+            {suggestions.map((text) => (
               <button key={text} onClick={() => onChange(text)}>
                 {text}
               </button>
@@ -105,30 +97,11 @@ export default function ChatPanel({
           onSend();
         }}
       >
-        <label className={"chat-mode" + (editMode ? " on" : "")}>
-          <input
-            type="checkbox"
-            checked={editMode}
-            disabled={busy}
-            onChange={(event) => onToggleEdit(event.target.checked)}
-          />
-          <PenLine size={13} />
-          <span>让它直接改正文</span>
-        </label>
-        {editMode && (
-          <p className="chat-mode-hint">
-            按你说的改这篇笔记；改之前的版本可以用顶栏「恢复原文」退回。
-          </p>
-        )}
         <textarea
           value={value}
           maxLength={2000}
           aria-label="对 AI 说"
-          placeholder={
-            editMode
-              ? "要它怎么改？例如「支出项目按金额从大到小排」「收入那三行合并成一行」"
-              : "问点什么，比如「第二段的结论是不是下太快了？」"
-          }
+          placeholder="问点什么，或者直接说怎么改，例如「支出项目按金额从大到小排」"
           disabled={busy}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
@@ -139,7 +112,7 @@ export default function ChatPanel({
           }}
         />
         <button className="primary full" disabled={busy || !value.trim()}>
-          <Send size={14} /> {editMode ? "让它改这篇" : "发送给 AI"}
+          <Send size={14} /> 发送给 AI
         </button>
       </form>
     </aside>
