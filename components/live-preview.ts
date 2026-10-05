@@ -6,121 +6,6 @@ import type { Annotation } from "@/lib/types";
 
 type Deco = Range<Decoration>;
 type Span = [number, number];
-type Align = "left" | "center" | "right" | null;
-
-const splitRow = (line: string) => {
-  const text = line.trim().replace(/^\|/, "").replace(/\|$/, "");
-  const cells: string[] = [];
-  let cell = "";
-  for (let index = 0; index < text.length; index++) {
-    const char = text[index];
-    if (char === "\\" && text[index + 1] === "|") {
-      cell += "|";
-      index++;
-      continue;
-    }
-    if (char === "|") {
-      cells.push(cell.trim());
-      cell = "";
-      continue;
-    }
-    cell += char;
-  }
-  cells.push(cell.trim());
-  return cells;
-};
-
-const isDivider = (cells: string[]) =>
-  cells.length > 0 &&
-  cells.every((cell) => /^:?-{1,}:?$/.test(cell.replace(/\s/g, "")));
-
-const alignOf = (cell: string): Align => {
-  const value = cell.replace(/\s/g, "");
-  if (/^:-+:$/.test(value)) return "center";
-  if (/^:-+$/.test(value)) return "left";
-  if (/^-+:$/.test(value)) return "right";
-  return null;
-};
-
-function fillCell(target: HTMLElement, text: string) {
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*|\[[^\]]+\]\([^)\s]+\))/g;
-  let cursor = 0;
-  for (const match of text.matchAll(pattern)) {
-    const token = match[0];
-    const at = match.index ?? 0;
-    if (at > cursor) target.append(text.slice(cursor, at));
-    if (token.startsWith("**")) {
-      const bold = document.createElement("strong");
-      bold.textContent = token.slice(2, -2);
-      target.append(bold);
-    } else if (token.startsWith("`")) {
-      const code = document.createElement("code");
-      code.textContent = token.slice(1, -1);
-      target.append(code);
-    } else if (token.startsWith("[")) {
-      const [, label, href] = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token) || [];
-      const link = document.createElement("a");
-      link.textContent = label ?? token;
-      if (href) {
-        link.href = href;
-        link.target = "_blank";
-        link.rel = "noreferrer";
-      }
-      target.append(link);
-    } else {
-      const em = document.createElement("em");
-      em.textContent = token.slice(1, -1);
-      target.append(em);
-    }
-    cursor = at + token.length;
-  }
-  if (cursor < text.length) target.append(text.slice(cursor));
-}
-
-class TableWidget extends WidgetType {
-  constructor(
-    readonly rows: string[][],
-    readonly align: Align[],
-    readonly from: number,
-  ) {
-    super();
-  }
-  eq(other: TableWidget) {
-    return (
-      this.from === other.from &&
-      JSON.stringify(other.rows) === JSON.stringify(this.rows)
-    );
-  }
-  toDOM() {
-    const wrap = document.createElement("div");
-    wrap.className = "cm-table-wrap";
-    wrap.dataset.tableFrom = String(this.from);
-    wrap.title = "点一下可以编辑表格源码";
-    const table = document.createElement("table");
-    table.className = "cm-table";
-    // GFM：列数以表头为准，多出来的单元格忽略，缺的补空。
-    const width = this.rows[0].length;
-    const cell = (tag: "th" | "td", text: string, column: number) => {
-      const node = document.createElement(tag);
-      const align = this.align[column];
-      if (align) node.style.textAlign = align;
-      fillCell(node, text ?? "");
-      return node;
-    };
-    const [header, , ...body] = this.rows;
-    const head = table.createTHead().insertRow();
-    for (let column = 0; column < width; column++)
-      head.append(cell("th", header[column] ?? "", column));
-    const tbody = table.createTBody();
-    for (const row of body) {
-      const tr = tbody.insertRow();
-      for (let column = 0; column < width; column++)
-        tr.append(cell("td", row[column] ?? "", column));
-    }
-    wrap.append(table);
-    return wrap;
-  }
-}
 
 /** 关掉编辑器自带主题，样式由 app/globals.css 里的 .cm-* 规则统一决定。 */
 export const editorTheme = EditorView.theme(
@@ -259,11 +144,7 @@ function annotationSpans(content: string, annotations: Annotation[]) {
     });
 }
 
-export function buildDecorations(
-  state: EditorState,
-  annotations: Annotation[],
-  editing: number | null = null,
-) {
+function build(state: EditorState, annotations: Annotation[]) {
   const doc = state.doc;
   const content = doc.toString();
   const out: Deco[] = [];
@@ -281,73 +162,11 @@ export function buildDecorations(
   }
   const marked = annotationSpans(content, annotations);
   const skip: Span[] = marked.map((item) => [item.from, item.to]);
-  const tables = new Map<number, { end: number; rows: string[][] }>();
-  const aligns = new Map<number, Align[]>();
-  for (let number = 1; number <= doc.lines; number++) {
-    const text = doc.line(number).text;
-    if (!/^\s*\|.*\|\s*$/.test(text)) continue;
-    const next = doc.line(number + 1);
-    if (!next || !/^\s*\|.*\|\s*$/.test(next.text)) continue;
-    const header = splitRow(text);
-    const divider = splitRow(next.text);
-    if (header.length !== divider.length || !isDivider(divider)) continue;
-    let end = number + 1;
-    while (end < doc.lines && /^\s*\|.*\|\s*$/.test(doc.line(end + 1).text))
-      end++;
-    const rows = [header];
-    for (let row = number + 1; row <= end; row++) {
-      const cells = splitRow(doc.line(row).text);
-      while (cells.length < header.length) cells.push("");
-      rows.push(cells);
-    }
-    tables.set(number, { end, rows });
-    aligns.set(number, divider.map(alignOf));
-    number = end;
-  }
   let fenced = false;
   for (let number = 1; number <= doc.lines; number++) {
     const line = doc.line(number);
     const text = line.text;
     const raw = active.has(number);
-    const table = tables.get(number);
-    if (table) {
-      const last = doc.line(table.end);
-      // 表格里贴了标签时始终显示源码，避免标签被藏起来；
-      // 光标在表格里也保持渲染，只有点过表格才显示源码方便编辑。
-      const opened =
-        editing !== null && editing >= line.from && editing <= last.to;
-      let inside = false;
-      for (let row = number; row <= table.end; row++)
-        if (active.has(row)) inside = true;
-      const tagged = marked.some(
-        (item) => item.from < last.to && item.to > line.from,
-      );
-      const live = tagged || (opened && inside);
-      if (!live) {
-        out.push(
-          Decoration.replace({
-            widget: new TableWidget(
-              table.rows,
-              aligns.get(number) ?? [],
-              line.from,
-            ),
-            block: true,
-          }).range(line.from, last.to),
-        );
-        replaced.push([line.from, last.to]);
-        number = table.end;
-        continue;
-      }
-      for (let row = number; row <= table.end; row++) {
-        const source = doc.line(row);
-        out.push(
-          Decoration.line({ class: "cm-table-source" }).range(source.from),
-        );
-        inline(source.text, source.from, out, [], replaced);
-      }
-      number = table.end;
-      continue;
-    }
     if (/^\s*(```|~~~)/.test(text)) {
       out.push(Decoration.line({ class: "cm-code-block" }).range(line.from));
       fenced = !fenced;
@@ -419,12 +238,11 @@ export function buildDecorations(
   return Decoration.set(out, true);
 }
 
-export function livePreview(annotations: Annotation[], editing: number | null) {
-  // 表格是块级替换装饰，插件不能提供，必须用 StateField。
+export function livePreview(annotations: Annotation[]) {
+  // 用 StateField 提供装饰：ViewPlugin 不能提供块级装饰，之前就是在这里翻的车。
   return StateField.define<DecorationSet>({
-    create: (state) => buildDecorations(state, annotations, editing),
-    update: (_, transaction) =>
-      buildDecorations(transaction.state, annotations, editing),
+    create: (state) => build(state, annotations),
+    update: (_, transaction) => build(transaction.state, annotations),
     provide: (field) => EditorView.decorations.from(field),
   });
 }

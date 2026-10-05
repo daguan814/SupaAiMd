@@ -88,7 +88,6 @@ export default function Workspace() {
   const [tagAnchor, setTagAnchor] = useState<TagAnchor | null>(null);
   const [tagMenu, setTagMenu] = useState<TagMenu | null>(null);
   const [customLabel, setCustomLabel] = useState("");
-  const [editTable, setEditTable] = useState<number | null>(null);
   const [drop, setDrop] = useState<{ path: string; after: boolean } | null>(
     null,
   );
@@ -98,9 +97,9 @@ export default function Workspace() {
       markdown(),
       EditorView.lineWrapping,
       editorTheme,
-      livePreview(annotations ?? [], editTable),
+      livePreview(annotations ?? []),
     ],
-    [annotations, editTable],
+    [annotations],
   );
   const dragPath = useRef<string | null>(null);
   const editorRef = useRef<ReactCodeMirrorRef>(null);
@@ -178,7 +177,6 @@ export default function Workspace() {
       localStorage.setItem("moxu-last-note", n.path);
     } catch {}
     setTagMenu(null);
-    setEditTable(null);
     setChatInput("");
     if (window.innerWidth < 640) setSidebar(false);
   };
@@ -1018,36 +1016,8 @@ export default function Workspace() {
                   }
                   rememberSelection();
                 }}
-                onKeyDown={(event) => {
-                  if (event.key !== "Escape") return;
-                  setEditTable(null);
-                  setTagAnchor(null);
-                  setTagMenu(null);
-                }}
                 onClick={(event) => {
-                  const target = event.target as Element;
-                  const view = editorRef.current?.view;
-                  const table =
-                    target.closest<HTMLElement>("[data-table-from]");
-                  if (table && view) {
-                    const at = Number(table.dataset.tableFrom);
-                    if (Number.isFinite(at)) {
-                      setEditTable(at);
-                      view.dispatch({ selection: { anchor: at } });
-                      view.focus();
-                    }
-                    setTagAnchor(null);
-                    setTagMenu(null);
-                    return;
-                  }
-                  // 点在表格源码行以外的地方，就收起表格编辑、恢复渲染。
-                  if (view) {
-                    const line = view.state.doc.lineAt(
-                      view.state.selection.main.head,
-                    );
-                    if (!/^\s*\|.*\|\s*$/.test(line.text)) setEditTable(null);
-                  }
-                  const tag = target.closest<HTMLElement>(
+                  const tag = (event.target as Element).closest<HTMLElement>(
                     "[data-annotation-id]",
                   );
                   if (!tag || busyRef.current) return;

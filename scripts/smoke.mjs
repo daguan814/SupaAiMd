@@ -121,8 +121,7 @@ try {
       failures.push("笔记没有打开（编辑器没出现）");
     const state = await evaluate(`({
       title: (document.querySelector(".document-heading h1") || {}).textContent || "",
-      tables: document.querySelectorAll(".cm-table").length,
-      rows: document.querySelectorAll(".cm-table tbody tr").length,
+      lines: document.querySelectorAll(".cm-line").length,
     })`);
     console.log("笔记自检:", JSON.stringify(state));
     if (!state?.title) failures.push("没有读到笔记标题");
