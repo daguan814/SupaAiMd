@@ -2,7 +2,7 @@
 
 个人使用的 AI Markdown 笔记网站。Next.js + TypeScript，CodeMirror 编辑，React Flow + ELK 展示只读关系图。
 
-当前版本 **V1.0.2**（对应 `package.json` 的 `version`，界面左下角显示）。每次发布更新末位递增：V1.0.3、V1.0.4……
+当前版本 **V1.0.3**（对应 `package.json` 的 `version`，界面左下角显示）。每次发布更新末位递增：V1.0.4、V1.0.5……
 
 ## 启动
 
@@ -57,6 +57,15 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+纯浏览器才暴露的问题（编辑器渲染、装饰、运行时异常）用真机自检兜底：先 `npm run dev`，另开终端跑
+
+```sh
+npm run smoke                             # 只确认首页能渲染、没有运行时异常
+SMOKE_NOTE="重要密码.md" npm run smoke      # 顺带打开一篇笔记检查内容
+```
+
+脚本用无头 Chrome 访问本地地址，会临时创建一个独立浏览器配置，不影响日常使用的浏览器。
 
 ## 暗色工作区与 AI 思考辅助
 

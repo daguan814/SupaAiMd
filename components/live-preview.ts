@@ -1,10 +1,6 @@
-import {
-  Decoration,
-  EditorView,
-  ViewPlugin,
-  WidgetType,
-} from "@codemirror/view";
-import type { DecorationSet, ViewUpdate } from "@codemirror/view";
+import { Decoration, EditorView, WidgetType } from "@codemirror/view";
+import type { DecorationSet } from "@codemirror/view";
+import { StateField } from "@codemirror/state";
 import type { EditorState, Range } from "@codemirror/state";
 import type { Annotation } from "@/lib/types";
 
@@ -424,16 +420,11 @@ export function buildDecorations(
 }
 
 export function livePreview(annotations: Annotation[], editing: number | null) {
-  return ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet;
-      constructor(view: EditorView) {
-        this.decorations = buildDecorations(view.state, annotations, editing);
-      }
-      update(update: ViewUpdate) {
-        this.decorations = buildDecorations(update.state, annotations, editing);
-      }
-    },
-    { decorations: (value) => value.decorations },
-  );
+  // 表格是块级替换装饰，插件不能提供，必须用 StateField。
+  return StateField.define<DecorationSet>({
+    create: (state) => buildDecorations(state, annotations, editing),
+    update: (_, transaction) =>
+      buildDecorations(transaction.state, annotations, editing),
+    provide: (field) => EditorView.decorations.from(field),
+  });
 }
