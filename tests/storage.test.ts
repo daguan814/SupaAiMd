@@ -88,22 +88,29 @@ test("拒绝重复节点和无效图连接", () => {
   );
 });
 
-test("排序持久化、目录重命名后顺序保留、拒绝过期的排序", async () => {
+test("排序持久化：笔记和文件夹都能排，重命名后顺序保留，拒绝过期排序", async () => {
   await s.init();
   try {
     for (const name of ["甲", "乙", "丙"]) await s.create(name, "folder");
     await s.create("甲/一", "folder");
     await s.create("甲/二", "folder");
-    await s.reorder("", ["丙", "甲", "乙"]);
+    await s.create("记录.md", "file");
+    await s.create("备忘.md", "file");
     await s.reorder("甲", ["甲/二", "甲/一"]);
     assert.deepEqual(
+      (await s.tree("甲")).map((e) => e.name),
+      ["二", "一"],
+    );
+    // 同一层里笔记和文件夹可以排在一起
+    await s.reorder("", ["记录.md", "丙", "甲", "乙", "备忘.md"]);
+    assert.deepEqual(
       (await s.tree()).map((e) => e.path),
-      ["丙", "甲", "乙"],
+      ["记录.md", "丙", "甲", "乙", "备忘.md"],
     );
     await s.move("甲", "丁");
     assert.deepEqual(
       (await s.tree()).map((e) => e.path),
-      ["丙", "丁", "乙"],
+      ["记录.md", "丙", "丁", "乙", "备忘.md"],
     );
     assert.deepEqual(
       (await s.tree("丁")).map((e) => e.name),
@@ -190,12 +197,7 @@ test("图评论、评论版本与并发图更新保护", async () => {
       /不在当前正文/,
     );
     n = await s.save(n.path, n.content + "天气也很好。", n.hash);
-    n = await s.removeAnnotation(
-      n.path,
-      saved.id,
-      n.hash,
-      n.annotationsHash,
-    );
+    n = await s.removeAnnotation(n.path, saved.id, n.hash, n.annotationsHash);
     assert.deepEqual(n.annotations, []);
     await s.trash(n.path);
     await s.create(n.path, "file");

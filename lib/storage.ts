@@ -103,16 +103,17 @@ export async function tree(directory = "", depth = 0): Promise<Entry[]> {
   }
   const orders = await readOrders();
   const order = orders[directory] || [];
-  return result.sort((a, b) =>
-    a.type === b.type
-      ? (a.type === "folder"
-          ? (order.indexOf(a.path) < 0 ? 99999 : order.indexOf(a.path)) -
-            (order.indexOf(b.path) < 0 ? 99999 : order.indexOf(b.path))
-          : 0) || a.name.localeCompare(b.name, "zh-CN")
-      : a.type === "folder"
-        ? -1
-        : 1,
-  );
+  const rank = (entry: Entry) => {
+    const index = order.indexOf(entry.path);
+    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  // 拖拽过的项按保存的顺序排；没排过的保持“文件夹在前、其余按名称”。
+  return result.sort((a, b) => {
+    const byOrder = rank(a) - rank(b);
+    if (byOrder) return byOrder;
+    if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+    return a.name.localeCompare(b.name, "zh-CN");
+  });
 }
 export async function read(relative: string): Promise<Note> {
   if (!relative.endsWith(".md")) throw new UserError("请选择 Markdown 笔记");
@@ -279,17 +280,15 @@ async function writeOrders(orders: Record<string, string[]>) {
 }
 export async function reorder(parent: string, ordered: string[]) {
   if (parent) await safe(parent);
-  const folders = (await tree(parent))
-    .filter((e) => e.type === "folder")
-    .map((e) => e.path);
+  const children = (await tree(parent)).map((e) => e.path);
   if (
     !Array.isArray(ordered) ||
     ordered.some((p) => typeof p !== "string") ||
-    new Set(ordered).size !== folders.length ||
-    ordered.length !== folders.length ||
-    folders.some((p) => !ordered.includes(p))
+    new Set(ordered).size !== children.length ||
+    ordered.length !== children.length ||
+    children.some((p) => !ordered.includes(p))
   )
-    throw new UserError("文件夹列表已变化，请刷新后重新排序", 409);
+    throw new UserError("笔记列表已变化，请刷新后重新排序", 409);
   const orders = await readOrders();
   orders[parent] = ordered;
   await writeOrders(orders);

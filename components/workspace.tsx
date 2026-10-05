@@ -63,6 +63,23 @@ function count(entries: Entry[]): number {
     0,
   );
 }
+const parentOf = (path: string) =>
+  path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+function findTreeEntry(list: Entry[], path: string): Entry | undefined {
+  for (const entry of list) {
+    if (entry.path === path) return entry;
+    const nested = findTreeEntry(entry.children || [], path);
+    if (nested) return nested;
+  }
+}
+const childrenOf = (list: Entry[], parent: string) =>
+  parent ? findTreeEntry(list, parent)?.children || [] : list;
+/** 不能把文件夹拖进自己或自己的子孙里。 */
+const canMoveInto = (source: string, folder: string) =>
+  !!source && source !== folder && !folder.startsWith(source + "/");
+/** 拖到它现在所属的文件夹上不算移动。 */
+const canDropInto = (source: string, folder: string) =>
+  parentOf(source) !== folder && canMoveInto(source, folder);
 export default function Workspace() {
   const [entries, setEntries] = useState<Entry[]>([]),
     [note, setNote] = useState<Note | null>(null),
@@ -89,9 +106,10 @@ export default function Workspace() {
   const [tagMenu, setTagMenu] = useState<TagMenu | null>(null);
   const [customLabel, setCustomLabel] = useState("");
   const [editTable, setEditTable] = useState<number | null>(null);
-  const [drop, setDrop] = useState<{ path: string; after: boolean } | null>(
-    null,
-  );
+  const [drop, setDrop] = useState<{
+    path: string;
+    mode: "before" | "after" | "into";
+  } | null>(null);
   const annotations = note?.annotations;
   const editorExtensions = useMemo(
     () => [
@@ -396,30 +414,8 @@ export default function Workspace() {
         }),
       );
     });
-  const reorder = (source: string, target: string, after: boolean) => {
-    const parent = source.includes("/")
-      ? source.slice(0, source.lastIndexOf("/"))
-      : "";
-    const targetParent = target.includes("/")
-      ? target.slice(0, target.lastIndexOf("/"))
-      : "";
-    if (source === target || parent !== targetParent) return;
-    const find = (list: Entry[]): Entry | undefined => {
-      for (const e of list) {
-        if (e.path === parent) return e;
-        const match = find(e.children || []);
-        if (match) return match;
-      }
-    };
-    const siblings = (parent ? find(entries)?.children : entries) || [];
-    const ordered = siblings
-      .filter((e) => e.type === "folder")
-      .map((e) => e.path)
-      .filter((p) => p !== source);
-    const index = ordered.indexOf(target);
-    if (index < 0) return;
-    ordered.splice(index + (after ? 1 : 0), 0, source);
-    void run("保存文件夹顺序", async () => {
+  const saveOrder = (parent: string, ordered: string[]) =>
+    void run("保存顺序", async () => {
       setEntries(
         (
           await api("/api/workspace", {
@@ -430,6 +426,74 @@ export default function Workspace() {
         ).tree,
       );
     });
+  // 放在某一项之前/之后；跨文件夹时先移动再插到指定位置。
+  const place = (source: string, target: string, after: boolean) => {
+    if (source === target) return;
+    const sourceParent = parentOf(source);
+    const targetParent = parentOf(target);
+    if (sourceParent === targetParent) {
+      const siblings = childrenOf(entries, targetParent)
+        .map((entry) => entry.path)
+        .filter((path) => path !== source);
+      const index = siblings.indexOf(target);
+      if (index < 0) return;
+      siblings.splice(index + (after ? 1 : 0), 0, source);
+      saveOrder(targetParent, siblings);
+      return;
+    }
+    if (!canMoveInto(source, targetParent)) return;
+    void run("移动到该文件夹", async () => {
+      await flush();
+      const name = source.split("/").pop() || source;
+      const to = targetParent ? targetParent + "/" + name : name;
+      const moved = await api("/api/workspace", {
+        action: "move",
+        path: source,
+        to,
+      });
+      const siblings = childrenOf(moved.tree, targetParent)
+        .map((entry) => entry.path)
+        .filter((path) => path !== to);
+      const index = siblings.indexOf(target);
+      siblings.splice(
+        index < 0 ? siblings.length : index + (after ? 1 : 0),
+        0,
+        to,
+      );
+      setEntries(
+        (
+          await api("/api/workspace", {
+            action: "reorder",
+            path: targetParent,
+            order: siblings,
+          })
+        ).tree,
+      );
+      await reopenMovedNote(source, to);
+    });
+  };
+  const moveInto = (source: string, folder: string) => {
+    if (!canDropInto(source, folder)) return;
+    void run("移动到该文件夹", async () => {
+      await flush();
+      const name = source.split("/").pop() || source;
+      const to = folder ? folder + "/" + name : name;
+      const moved = await api("/api/workspace", {
+        action: "move",
+        path: source,
+        to,
+      });
+      setEntries(moved.tree);
+      await reopenMovedNote(source, to);
+    });
+  };
+  // 打开中的笔记（或它的父文件夹）被移动后，跟着新路径重新打开。
+  const reopenMovedNote = async (from: string, to: string) => {
+    const open = current.current;
+    if (!open) return;
+    if (open.path !== from && !open.path.startsWith(from + "/")) return;
+    const next = to + open.path.slice(from.length);
+    apply(await api("/api/workspace?path=" + encodeURIComponent(next)));
   };
   const submit = () => {
     if (!dialog) return;
@@ -449,10 +513,16 @@ export default function Workspace() {
         if (dialog.kind === "file")
           apply(await api("/api/workspace?path=" + encodeURIComponent(path)));
       } else if (dialog.kind === "move") {
+        const parent = parentOf(dialog.path);
+        let name = path.replace(/^\/+/, "");
+        if (!name) return;
+        if (dialog.path.endsWith(".md") && !name.endsWith(".md")) name += ".md";
+        const to = parent ? parent + "/" + name : name;
+        if (to !== dialog.path && !canMoveInto(dialog.path, parent)) return;
         const data = await api("/api/workspace", {
           action: "move",
           path: dialog.path,
-          to: path,
+          to,
         });
         setEntries(data.tree);
         if (
@@ -464,7 +534,7 @@ export default function Workspace() {
             await api(
               "/api/workspace?path=" +
                 encodeURIComponent(
-                  path + current.current.path.slice(dialog.path.length),
+                  to + current.current.path.slice(dialog.path.length),
                 ),
             ),
           );
@@ -512,14 +582,7 @@ export default function Workspace() {
   const matches = (entry: Entry): boolean =>
     entry.name.toLowerCase().includes(query.toLowerCase()) ||
     (entry.children || []).some(matches);
-  const findEntry = (list: Entry[], path: string): Entry | undefined => {
-    for (const e of list) {
-      if (e.path === path) return e;
-      const nested = findEntry(e.children || [], path);
-      if (nested) return nested;
-    }
-  };
-  const menuEntry = menu ? findEntry(entries, menu) : undefined;
+  const menuEntry = menu ? findTreeEntry(entries, menu) : undefined;
   const renderTree = (list: Entry[], depth = 0): React.ReactNode =>
     list.filter(matches).map((entry) => (
       <div key={entry.path}>
@@ -527,17 +590,20 @@ export default function Workspace() {
           className={
             "tree-row " +
             (note?.path === entry.path ? "selected " : "") +
-            (drop?.path === entry.path
-              ? drop.after
+            (drop?.path === entry.path && drop.mode !== "into"
+              ? drop.mode === "after"
                 ? "drop-after"
                 : "drop-before"
+              : "") +
+            (drop?.path === entry.path && drop.mode === "into"
+              ? "drop-into"
               : "")
           }
           style={{
             paddingLeft:
               12 + depth * 24 + (entry.type === "file" && depth > 0 ? 24 : 0),
           }}
-          draggable={entry.type === "folder" && !busy && !query}
+          draggable={!busy && !query}
           onDragStart={(e) => {
             dragPath.current = entry.path;
             e.dataTransfer.setData("text/plain", entry.path);
@@ -546,40 +612,60 @@ export default function Workspace() {
           }}
           onDragOver={(e) => {
             const source = dragPath.current;
-            if (
-              !source ||
-              source === entry.path ||
-              entry.type !== "folder" ||
-              source.split("/").slice(0, -1).join("/") !==
-                entry.path.split("/").slice(0, -1).join("/")
-            )
-              return;
+            if (!source || source === entry.path) return;
             e.preventDefault();
             e.stopPropagation();
             const rect = e.currentTarget.getBoundingClientRect();
+            const ratio = (e.clientY - rect.top) / rect.height;
+            if (
+              entry.type === "folder" &&
+              canDropInto(source, entry.path) &&
+              ratio > 0.28 &&
+              ratio < 0.72
+            ) {
+              setDrop({ path: entry.path, mode: "into" });
+              return;
+            }
+            if (!canMoveInto(source, parentOf(entry.path))) {
+              setDrop(null);
+              return;
+            }
             setDrop({
               path: entry.path,
-              after: e.clientY > rect.top + rect.height / 2,
+              mode: ratio < 0.5 ? "before" : "after",
             });
           }}
           onDrop={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (dragPath.current && drop?.path === entry.path)
-              reorder(dragPath.current, entry.path, drop.after);
+            const source = dragPath.current;
             dragPath.current = null;
             setDrop(null);
+            if (!source || source === entry.path) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const ratio = (e.clientY - rect.top) / rect.height;
+            if (
+              entry.type === "folder" &&
+              canDropInto(source, entry.path) &&
+              ratio > 0.28 &&
+              ratio < 0.72
+            ) {
+              moveInto(source, entry.path);
+              return;
+            }
+            if (canMoveInto(source, parentOf(entry.path)))
+              place(source, entry.path, ratio >= 0.5);
           }}
           onDragEnd={() => {
             dragPath.current = null;
             setDrop(null);
           }}
         >
-          {entry.type === "folder" && (
+          {!busy && !query && (
             <GripVertical
               size={12}
               className="drag-grip"
-              aria-label="拖动文件夹排序"
+              aria-label="拖动排序或移动到文件夹"
             />
           )}
           <button
@@ -643,19 +729,19 @@ export default function Workspace() {
     setDialog({
       kind,
       path: menuEntry.path,
-      value: kind === "move" ? menuEntry.path : "",
+      value: kind === "move" ? menuEntry.name : "",
     });
     setMenu(null);
   };
   const menuSort = (direction: number) => {
     if (!menuEntry) return;
-    const parent = menuEntry.path.split("/").slice(0, -1).join("/");
-    const siblings =
-      (parent ? findEntry(entries, parent)?.children : entries) || [];
-    const folders = siblings.filter((e) => e.type === "folder");
+    const parent = parentOf(menuEntry.path);
+    const folders = childrenOf(entries, parent).filter(
+      (entry) => entry.type === "folder",
+    );
     const index = folders.findIndex((e) => e.path === menuEntry.path);
     const target = folders[index + direction];
-    if (target) reorder(menuEntry.path, target.path, direction > 0);
+    if (target) place(menuEntry.path, target.path, direction > 0);
     setMenu(null);
   };
   const exportNote = () => {
@@ -781,7 +867,23 @@ export default function Workspace() {
               </button>
             </div>
           </div>
-          <nav className="file-tree" onScroll={() => setMenu(null)}>
+          <nav
+            className={"file-tree" + (drop?.path === "" ? " drop-root" : "")}
+            onScroll={() => setMenu(null)}
+            onDragOver={(event) => {
+              const source = dragPath.current;
+              if (!source || !parentOf(source)) return;
+              event.preventDefault();
+              setDrop({ path: "", mode: "into" });
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const source = dragPath.current;
+              dragPath.current = null;
+              setDrop(null);
+              if (source) moveInto(source, "");
+            }}
+          >
             {loading ? (
               <p className="tree-empty">正在打开笔记库…</p>
             ) : entries.length ? (
@@ -1264,7 +1366,7 @@ export default function Workspace() {
               </>
             )}
             <button role="menuitem" onClick={() => menuAction("move")}>
-              <Pencil size={16} /> 重命名 / 移动
+              <Pencil size={16} /> 重命名
             </button>
             <button
               role="menuitem"
@@ -1300,14 +1402,14 @@ export default function Workspace() {
                 : dialog.kind === "folder"
                   ? "新建文件夹"
                   : dialog.kind === "move"
-                    ? "重命名或移动"
+                    ? "重命名"
                     : "移到回收目录"}
             </h2>
             <p>
               {dialog.kind === "trash"
                 ? `「${dialog.path}」将从笔记库移除，原文件会保留在服务器回收目录。`
                 : dialog.kind === "move"
-                  ? "填写完整路径，例如：学习/阅读记录.md。目标文件夹需要已存在。"
+                  ? "只改名字；要换文件夹或调整顺序，直接拖动这一项。"
                   : `保存位置：${dialog.path || "笔记库"}`}
             </p>
             {dialog.kind !== "trash" && (
@@ -1320,7 +1422,11 @@ export default function Workspace() {
                   setDialog({ ...dialog, value: e.target.value })
                 }
                 placeholder={
-                  dialog.kind === "file" ? "笔记名称" : "文件夹名称或路径"
+                  dialog.kind === "file"
+                    ? "笔记名称"
+                    : dialog.kind === "move"
+                      ? "新名称"
+                      : "文件夹名称或路径"
                 }
               />
             )}
