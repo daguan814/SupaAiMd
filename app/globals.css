@@ -433,7 +433,7 @@ input:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 .paper {
-  flex: 1;
+  flex: 0 0 auto;
   padding: 25px 0;
   min-height: 260px;
 }
@@ -462,7 +462,7 @@ input:focus-visible {
   border-left-color: #8996bd !important;
 }
 .cm-selectionBackground {
-  background: #959da9 !important;
+  background: #3d4661 !important;
 }
 .cm-placeholder {
   color: #959da9 !important;
@@ -470,6 +470,7 @@ input:focus-visible {
 .editor-footer {
   display: flex;
   justify-content: space-between;
+  margin-top: auto;
   position: sticky;
   bottom: 0;
   background: #191b20;
@@ -1547,6 +1548,25 @@ body {
   width: 236px;
   max-height: 70vh;
   overflow: auto;
+}
+.tag-anchor {
+  position: fixed;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid #4a5164;
+  border-radius: 999px;
+  background: #2c303a;
+  color: #d6dcea;
+  font: inherit;
+  font-size: 11px;
+  box-shadow: 0 8px 24px #0007;
+}
+.tag-anchor:hover {
+  border-color: #6d7ba6;
+  color: #eef1f8;
 }
 .tag-quote {
   margin: 4px 6px 8px;

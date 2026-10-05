@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import type { ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import Insights from "./insights";
 import ChatPanel from "./chat-panel";
-import { livePreview } from "./live-preview";
+import { editorTheme, livePreview } from "./live-preview";
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorView } from "@codemirror/view";
 import {
@@ -31,6 +31,7 @@ import {
   Pencil,
   Upload,
   MessageSquare,
+  Tag,
   GripVertical,
   ArrowUp,
   ArrowDown,
@@ -55,6 +56,7 @@ type TagMenu = {
   id?: string;
   label?: string;
 };
+type TagAnchor = { quote: string; x: number; y: number };
 function count(entries: Entry[]): number {
   return entries.reduce(
     (n, e) => n + (e.type === "file" ? 1 : count(e.children || [])),
@@ -83,6 +85,7 @@ export default function Workspace() {
   const [instruction, setInstruction] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [tagAnchor, setTagAnchor] = useState<TagAnchor | null>(null);
   const [tagMenu, setTagMenu] = useState<TagMenu | null>(null);
   const [customLabel, setCustomLabel] = useState("");
   const [drop, setDrop] = useState<{ path: string; after: boolean } | null>(
@@ -90,7 +93,12 @@ export default function Workspace() {
   );
   const annotations = note?.annotations;
   const editorExtensions = useMemo(
-    () => [markdown(), EditorView.lineWrapping, livePreview(annotations ?? [])],
+    () => [
+      markdown(),
+      EditorView.lineWrapping,
+      editorTheme,
+      livePreview(annotations ?? []),
+    ],
     [annotations],
   );
   const dragPath = useRef<string | null>(null);
@@ -115,12 +123,17 @@ export default function Workspace() {
     };
   }, [menu]);
   useEffect(() => {
-    if (!tagMenu) return;
+    if (!tagMenu && !tagAnchor) return;
     const close = (e: MouseEvent) => {
-      if (!(e.target as Element).closest(".tag-menu")) setTagMenu(null);
+      const target = e.target as Element;
+      if (target.closest(".tag-menu") || target.closest(".tag-anchor")) return;
+      setTagMenu(null);
+      setTagAnchor(null);
     };
     const escape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setTagMenu(null);
+      if (e.key !== "Escape") return;
+      setTagMenu(null);
+      setTagAnchor(null);
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", escape);
@@ -128,7 +141,7 @@ export default function Workspace() {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", escape);
     };
-  }, [tagMenu]);
+  }, [tagMenu, tagAnchor]);
   const current = useRef<Note | null>(null),
     draft = useRef(""),
     pending = useRef<Promise<void> | null>(null),
@@ -283,31 +296,36 @@ export default function Workspace() {
         if (action === "revise") setInstruction("");
       },
     );
-  const openTagMenu = (point?: { x: number; y: number }) => {
+  // 选中文字时只浮出一个小按钮，不抢焦点，方便直接复制。
+  const rememberSelection = (point?: { x: number; y: number }) => {
     const view = editorRef.current?.view;
     const range = view?.state.selection.main;
     if (!view || !range || range.empty) {
-      setTagMenu(null);
+      setTagAnchor(null);
       return;
     }
     const quote = view.state.sliceDoc(range.from, range.to).trim();
     if (!quote || quote.length > 300) {
-      setTagMenu(null);
+      setTagAnchor(null);
       return;
     }
     const at = view.coordsAtPos(range.to);
-    const width = 236;
-    const height = 320;
+    const width = 92;
     const x = Math.min(
       point?.x ?? at?.left ?? 40,
       window.innerWidth - width - 12,
     );
     const y = Math.min(
       (point?.y ?? at?.bottom ?? 80) + 8,
-      Math.max(12, window.innerHeight - height),
+      window.innerHeight - 46,
     );
+    setTagMenu(null);
+    setTagAnchor({ quote, x: Math.max(12, x), y: Math.max(12, y) });
+  };
+  const openTagMenu = (anchor: TagAnchor) => {
     setCustomLabel("");
-    setTagMenu({ quote, x: Math.max(12, x), y });
+    setTagAnchor(null);
+    setTagMenu(anchor);
   };
   const saveTag = (label: string) =>
     run("正在保存标签", async () => {
@@ -795,9 +813,7 @@ export default function Workspace() {
             <span className="avatar">我</span>
             <div>
               我的空间
-              <small>
-                {version} · 每一个想法，都值得留下
-              </small>
+              <small>{version} · 每一个想法，都值得留下</small>
             </div>
             <span className="online-dot" />
           </div>
@@ -987,9 +1003,19 @@ export default function Workspace() {
               <div
                 className="paper"
                 onMouseUp={(event) =>
-                  openTagMenu({ x: event.clientX, y: event.clientY })
+                  rememberSelection({ x: event.clientX, y: event.clientY })
                 }
-                onKeyUp={() => openTagMenu()}
+                onKeyUp={(event) => {
+                  const key = event.key.toLowerCase();
+                  if (
+                    (event.metaKey || event.ctrlKey) &&
+                    (key === "c" || key === "x")
+                  ) {
+                    setTagAnchor(null);
+                    return;
+                  }
+                  rememberSelection();
+                }}
                 onClick={(event) => {
                   const tag = (event.target as Element).closest<HTMLElement>(
                     "[data-annotation-id]",
@@ -1012,7 +1038,7 @@ export default function Workspace() {
                 <Editor
                   value={text}
                   ref={editorRef}
-                  theme="dark"
+                  theme="none"
                   extensions={editorExtensions}
                   editable={!busy}
                   onChange={(value) => {
@@ -1026,6 +1052,7 @@ export default function Workspace() {
                     foldGutter: false,
                     highlightActiveLine: false,
                     highlightActiveLineGutter: false,
+                    syntaxHighlighting: false,
                   }}
                 />
               </div>
@@ -1115,6 +1142,17 @@ export default function Workspace() {
           )}
         </div>
       </main>
+      {tagAnchor &&
+        createPortal(
+          <button
+            className="tag-anchor"
+            style={{ left: tagAnchor.x, top: tagAnchor.y }}
+            onClick={() => openTagMenu(tagAnchor)}
+          >
+            <Tag size={13} /> 贴标签
+          </button>,
+          document.body,
+        )}
       {tagMenu &&
         createPortal(
           <div

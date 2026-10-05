@@ -2,7 +2,7 @@
 
 个人使用的 AI Markdown 笔记网站。Next.js + TypeScript，CodeMirror 编辑，React Flow + ELK 展示只读关系图。
 
-当前版本 **V1.0.0**（对应 `package.json` 的 `version`，界面左下角显示）。每次发布更新末位递增：V1.0.1、V1.0.2……
+当前版本 **V1.0.1**（对应 `package.json` 的 `version`，界面左下角显示）。每次发布更新末位递增：V1.0.2、V1.0.3……
 
 ## 启动
 

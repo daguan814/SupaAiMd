@@ -1,10 +1,29 @@
-import { Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
-import type { DecorationSet, EditorView, ViewUpdate } from "@codemirror/view";
+import {
+  Decoration,
+  EditorView,
+  ViewPlugin,
+  WidgetType,
+} from "@codemirror/view";
+import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import type { EditorState, Range } from "@codemirror/state";
 import type { Annotation } from "@/lib/types";
 
 type Deco = Range<Decoration>;
 type Span = [number, number];
+
+/** 关掉编辑器自带主题，样式由 app/globals.css 里的 .cm-* 规则统一决定。 */
+export const editorTheme = EditorView.theme(
+  {
+    "&": { color: "#dfe3ed", backgroundColor: "transparent" },
+    ".cm-content": { caretColor: "#c8cfe0" },
+    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#c8cfe0" },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
+      backgroundColor: "#3d4661",
+    },
+    ".cm-activeLine": { backgroundColor: "transparent" },
+  },
+  { dark: true },
+);
 
 class AnnotationTag extends WidgetType {
   constructor(
@@ -95,7 +114,9 @@ function inline(
     hide(from, textFrom);
     hide(textFrom + match[1].length, to);
   }
-  for (const match of text.matchAll(/(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g)) {
+  for (const match of text.matchAll(
+    /(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g,
+  )) {
     const from = base + match.index;
     const to = from + match[0].length;
     if (blocked(from, to)) continue;
@@ -151,16 +172,12 @@ function build(state: EditorState, annotations: Annotation[]) {
     const text = line.text;
     const raw = active.has(number);
     if (/^\s*(```|~~~)/.test(text)) {
-      out.push(
-        Decoration.line({ class: "cm-code-block" }).range(line.from),
-      );
+      out.push(Decoration.line({ class: "cm-code-block" }).range(line.from));
       fenced = !fenced;
       continue;
     }
     if (fenced) {
-      out.push(
-        Decoration.line({ class: "cm-code-block" }).range(line.from),
-      );
+      out.push(Decoration.line({ class: "cm-code-block" }).range(line.from));
       continue;
     }
     const heading = /^(#{1,6})\s+/.exec(text);
