@@ -1,6 +1,6 @@
 {
   "name": "supaaimd",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "",
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",

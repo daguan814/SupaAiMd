@@ -157,13 +157,16 @@ class AnnotationTag extends WidgetType {
 }
 
 class Bullet extends WidgetType {
+  constructor(readonly depth: number) {
+    super();
+  }
   eq(other: Bullet) {
-    return other instanceof Bullet;
+    return other.depth === this.depth;
   }
   toDOM() {
     const dot = document.createElement("span");
     dot.className = "cm-bullet";
-    dot.textContent = "•";
+    dot.textContent = ["•", "◦", "▪"][this.depth % 3];
     return dot;
   }
 }
@@ -388,10 +391,14 @@ export function buildDecorations(
     const ordered = /^(\s*)\d+[.)]\s+/.exec(text);
     if (bullet) {
       const from = line.from + bullet[1].length;
+      const depth = Math.floor(bullet[1].length / 2);
       out.push(Decoration.line({ class: "cm-list" }).range(line.from));
       if (!raw) {
         out.push(
-          Decoration.replace({ widget: new Bullet() }).range(from, from + 1),
+          Decoration.replace({ widget: new Bullet(depth) }).range(
+            from,
+            from + 1,
+          ),
         );
         replaced.push([from, from + 1]);
       }

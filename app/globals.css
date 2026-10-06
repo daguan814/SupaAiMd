@@ -1041,23 +1041,33 @@ body {
 .cm-heading {
   font-family: var(--serif);
   font-weight: 600;
-  color: #f0f2f7;
 }
+/* 标题按层级分色，一眼看出结构。 */
 .cm-heading.cm-h1 {
+  color: #e2b980;
   font-size: 26px;
   line-height: 1.7 !important;
 }
 .cm-heading.cm-h2 {
+  color: #a8c9a2;
   font-size: 21px;
   line-height: 1.8 !important;
 }
 .cm-heading.cm-h3 {
+  color: #96b4e0;
   font-size: 18px;
 }
-.cm-heading.cm-h4,
-.cm-heading.cm-h5,
-.cm-heading.cm-h6 {
+.cm-heading.cm-h4 {
+  color: #b5a7dd;
   font-size: 16px;
+}
+.cm-heading.cm-h5 {
+  color: #8fcfc4;
+  font-size: 15px;
+}
+.cm-heading.cm-h6 {
+  color: #9aa4b8;
+  font-size: 15px;
 }
 .cm-strong {
   font-weight: 700;
