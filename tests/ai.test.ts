@@ -1,6 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assist, complete } from "../lib/ai";
+import { assist, complete, keptRatio } from "../lib/ai";
+
+test("keptRatio 只统计原样保留的句子", () => {
+  assert.equal(
+    keptRatio("今天去超市买牛奶。明天再决定。", "今天去超市买牛奶。明天再决定。"),
+    1,
+  );
+  assert.equal(
+    keptRatio("今天去超市买牛奶。明天再决定。", "今天去超市买了牛奶。改天再决定吧。"),
+    0,
+  );
+  assert.equal(keptRatio("```\nconst a = 1;\n```", "```\nconst a = 2;\n```"), 0);
+});
 
 test("润色重试无变化结果，并拒绝空白差异和不完整输出", async (t) => {
   const originalFetch = globalThis.fetch;
@@ -15,6 +27,26 @@ test("润色重试无变化结果，并拒绝空白差异和不完整输出", as
       let calls = 0;
       globalThis.fetch = async () => respond(++calls === 1 ? source : edited);
       assert.equal(await complete(source, "polish"), edited);
+      assert.equal(calls, 2);
+    });
+    await t.test("真正改写了句子就通过", async () => {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return respond(
+          "# 记录想法\n\n想记录的时候就写下来，以后回头翻会轻松很多。",
+        );
+      };
+      await complete(source, "polish");
+      assert.equal(calls, 1);
+    });
+    await t.test("只加标题和列表、句子原样保留，算只改排版", async () => {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return respond("# 记录想法\n\n- 我想记录想法。\n- 整理后更容易回顾。");
+      };
+      await assert.rejects(complete(source, "polish"), /只改了排版/);
       assert.equal(calls, 2);
     });
     await t.test("只改空白不算有效修改，两次无变化后明确失败", async () => {
