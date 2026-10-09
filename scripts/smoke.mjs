@@ -1,166 +1,163 @@
 /**
- * 真机自检：用无头 Chrome 打开本地应用，确认页面能渲染、没有运行时异常。
+ * 真机自检：用无头浏览器打开本地应用，确认页面能渲染、交互能点开、没有运行时异常。
  *
- *   npm run dev            # 另开一个终端
- *   npm run smoke          # 默认检查 http://127.0.0.1:3000
- *   SMOKE_NOTE="重要密码.md" npm run smoke    # 顺便检查这篇笔记能打开
+ *   npm run dev                              # 另开一个终端
+ *   npm run smoke                            # 默认检查 http://127.0.0.1:3000
+ *   SMOKE_NOTE="重要密码.md" npm run smoke     # 顺带打开一篇笔记检查内容
  *
- * 环境变量：SMOKE_URL、SMOKE_NOTE、CHROME_PATH。
+ * 首次使用先装一次浏览器（WebKit 就是 Safari 的引擎）：
+ *   npx playwright-core install webkit
+ *
+ * 环境变量：SMOKE_URL、SMOKE_NOTE、SMOKE_BROWSER（webkit / chromium / firefox）、
+ * SMOKE_HEADFUL=1 可以看到窗口。所有检查都只看不改，不会动任何笔记。
  */
-import { spawn } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { chromium, firefox, webkit } from "playwright-core";
 
 const APP = process.env.SMOKE_URL || "http://127.0.0.1:3000/";
 const NOTE = process.env.SMOKE_NOTE || "";
-const CHROME =
-  process.env.CHROME_PATH ||
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const PORT = Number(process.env.SMOKE_PORT || 9333);
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), "moxu-smoke-"));
+const NAME = process.env.SMOKE_BROWSER || "webkit";
+const engines = { webkit, chromium, firefox };
+const engine = engines[NAME];
 const failures = [];
 
-const chrome = spawn(
-  CHROME,
-  [
-    "--headless=new",
-    "--disable-gpu",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--window-size=1440,1000",
-    `--user-data-dir=${profile}`,
-    `--remote-debugging-port=${PORT}`,
-    "about:blank",
-  ],
-  { stdio: "ignore" },
-);
-
-let socket;
-let nextId = 0;
-const pending = new Map();
-const exceptions = [];
-
-const send = (method, params = {}, sessionId) =>
-  new Promise((resolve) => {
-    const id = ++nextId;
-    pending.set(id, resolve);
-    socket.send(JSON.stringify({ id, method, params, sessionId }));
-  });
-
-async function launch() {
-  for (let attempt = 0; attempt < 80; attempt++) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${PORT}/json/version`);
-      if (response.ok) return response.json();
-    } catch {}
-    await sleep(250);
-  }
-  throw new Error("无头 Chrome 没起来，请检查 CHROME_PATH");
+if (!engine) {
+  console.error(
+    `✖ 不认识的 SMOKE_BROWSER：${NAME}（可选 webkit / chromium / firefox）`,
+  );
+  process.exit(1);
 }
 
-try {
-  const version = await launch();
-  socket = new WebSocket(version.webSocketDebuggerUrl);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(event.data);
-    if (message.id && pending.has(message.id)) {
-      pending.get(message.id)(message);
-      pending.delete(message.id);
-      return;
-    }
-    if (message.method === "Runtime.exceptionThrown")
-      exceptions.push(
-        message.params?.exceptionDetails?.exception?.description?.slice(0, 300),
-      );
-  });
-  await new Promise((resolve) => socket.addEventListener("open", resolve));
-
-  const { result: target } = await send("Target.createTarget", {
-    url: "about:blank",
-  });
-  const { result: attached } = await send("Target.attachToTarget", {
-    targetId: target.targetId,
-    flatten: true,
-  });
-  const sessionId = attached.sessionId;
-  await send("Page.enable", {}, sessionId);
-  await send("Runtime.enable", {}, sessionId);
-
-  const evaluate = async (expression) => {
-    const response = await send(
-      "Runtime.evaluate",
-      { expression, awaitPromise: true, returnByValue: true },
-      sessionId,
+const browser = await engine
+  .launch({ headless: !process.env.SMOKE_HEADFUL })
+  .catch((error) => {
+    console.error(
+      `✖ 启动 ${NAME} 失败：${String(error.message).split("\n")[0]}`,
     );
-    return response.result?.exceptionDetails
-      ? undefined
-      : response.result?.result?.value;
-  };
-  const waitFor = async (expression, timeout = 25000) => {
-    const started = Date.now();
-    while (Date.now() - started < timeout) {
-      if (await evaluate(expression)) return true;
-      await sleep(400);
-    }
-    return false;
-  };
+    console.error(
+      `  没装这个浏览器的话，先跑一次：npx playwright-core install ${NAME}`,
+    );
+    process.exit(1);
+  });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+const exceptions = [];
+page.on("pageerror", (error) => exceptions.push(String(error).slice(0, 300)));
 
-  await send("Page.navigate", { url: APP }, sessionId);
-  if (!(await waitFor(`!!document.querySelector(".workspace")`)))
+/** 点一项并确认它出现了；打不开就记一条失败。 */
+const open = async (click, selector, label) => {
+  await click();
+  const found = await page
+    .waitForSelector(selector, { timeout: 8000 })
+    .catch(() => null);
+  if (!found) failures.push(label);
+  return found;
+};
+
+try {
+  await page.goto(APP, { waitUntil: "domcontentloaded" });
+  if (
+    !(await page
+      .waitForSelector(".workspace", { timeout: 25000 })
+      .catch(() => null))
+  )
     failures.push("页面没有渲染出工作区");
+  // 等笔记库读进来（加载中会显示「正在打开笔记库…」）
+  await page
+    .waitForFunction(
+      () => !(document.body.innerText || "").includes("正在打开笔记库"),
+      null,
+      { timeout: 15000 },
+    )
+    .catch(() => {});
 
   if (NOTE) {
-    await evaluate(
-      `localStorage.setItem("moxu-last-note", ${JSON.stringify(NOTE)})`,
+    await page.evaluate(
+      (note) => localStorage.setItem("moxu-last-note", note),
+      NOTE,
     );
-    await send("Page.navigate", { url: APP }, sessionId);
-    if (!(await waitFor(`!!document.querySelector(".cm-editor")`)))
+    await page.reload({ waitUntil: "domcontentloaded" });
+    if (
+      !(await page
+        .waitForSelector(".cm-editor", { timeout: 25000 })
+        .catch(() => null))
+    )
       failures.push("笔记没有打开（编辑器没出现）");
-    const state = await evaluate(`({
-      title: (document.querySelector(".document-heading h1") || {}).textContent || "",
+    const state = await page.evaluate(() => ({
+      title: document.querySelector(".document-heading h1")?.textContent || "",
       tables: document.querySelectorAll(".cm-table").length,
       rows: document.querySelectorAll(".cm-table tbody tr").length,
-    })`);
+    }));
     console.log("笔记自检:", JSON.stringify(state));
-    if (!state?.title) failures.push("没有读到笔记标题");
+    if (!state.title) failures.push("没有读到笔记标题");
   } else {
     console.log("只检查了首页（设置 SMOKE_NOTE 可以顺带打开一篇笔记）");
   }
 
-  // 回收站只看不动：点开面板确认能列出内容，不改任何笔记。
-  // 笔记库还在加载时按钮还没接上事件，所以这里点几次，直到面板真的出现。
-  let opened = false;
-  for (let attempt = 0; attempt < 10 && !opened; attempt++) {
-    if (await evaluate(`!!document.querySelector(".trash-button")`)) {
-      await evaluate(`document.querySelector(".trash-button").click()`);
-      opened = await waitFor(`!!document.querySelector(".trash-modal")`, 2000);
-    }
-    if (!opened) await sleep(500);
-  }
-  if (!opened) failures.push("侧栏回收站按钮打不开面板");
+  // 笔记库：下拉能列出来，当前那本在里面（只看不动）
+  const current = await page
+    .$eval(".library-switch > span", (node) => node.textContent)
+    .catch(() => "");
+  if (!current) failures.push("侧栏没有显示当前笔记库");
   else {
-    const panel = await evaluate(`({
-      title: (document.querySelector(".trash-modal h2") || {}).textContent || "",
-      items: document.querySelectorAll(".trash-item").length,
-    })`);
-    console.log("回收站自检:", JSON.stringify(panel));
-    if (panel?.title !== "回收站") failures.push("回收站面板标题不对");
+    const menu = await open(
+      () => page.click(".library-switch"),
+      ".library-menu",
+      "笔记库下拉打不开",
+    );
+    if (menu) {
+      const names = await page.$$eval(".library-menu button span", (nodes) =>
+        nodes.map((node) => node.textContent),
+      );
+      console.log("笔记库自检:", JSON.stringify({ current, names }));
+      if (!names.includes(current)) failures.push("下拉里没有当前笔记库");
+      await page.keyboard.press("Escape");
+    }
   }
 
-  const overlay = await evaluate(
-    `(document.body.innerText || "").includes("Runtime ")`,
+  // 回收站：面板能列出来（只看不动）
+  if (await page.$(".trash-button")) {
+    const panel = await open(
+      () => page.click(".trash-button"),
+      ".trash-modal",
+      "侧栏回收站按钮打不开面板",
+    );
+    if (panel) {
+      const trash = await page.evaluate(() => ({
+        title: document.querySelector(".trash-modal h2")?.textContent || "",
+        items: document.querySelectorAll(".trash-item").length,
+      }));
+      console.log("回收站自检:", JSON.stringify(trash));
+      if (trash.title !== "回收站") failures.push("回收站面板标题不对");
+      await page.click(".trash-modal .modal-actions button");
+    }
+  }
+
+  // 设置：点左下角「我的空间」能打开，里面列出笔记库（只看不动，不新建）
+  if (await page.$(".sidebar-bottom")) {
+    const dialog = await open(
+      () => page.click(".sidebar-bottom"),
+      ".settings-modal",
+      "点「我的空间」没有打开设置",
+    );
+    if (dialog) {
+      const libraries = await page.$$eval(
+        ".library-row .library-name > span",
+        (nodes) => nodes.map((node) => node.textContent),
+      );
+      console.log("设置自检:", JSON.stringify({ libraries }));
+      if (!libraries.length) failures.push("设置里没有列出笔记库");
+      await page.click(".settings-modal .modal-actions button");
+    }
+  } else failures.push("左下角没有「我的空间」入口");
+
+  const overlay = await page.evaluate(() =>
+    (document.body.innerText || "").includes("Runtime "),
   );
   if (overlay) failures.push("页面出现了运行时错误浮层");
   if (exceptions.length) failures.push(`未捕获异常：${exceptions[0]}`);
 } catch (error) {
   failures.push(error.message);
 } finally {
-  socket?.close();
-  chrome.kill("SIGKILL");
-  fs.rmSync(profile, { recursive: true, force: true });
+  await browser.close();
 }
 
 if (failures.length) {

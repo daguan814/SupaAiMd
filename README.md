@@ -63,14 +63,18 @@ npm test
 npm run build
 ```
 
-纯浏览器才暴露的问题（编辑器渲染、装饰、运行时异常）用真机自检兜底：先 `npm run dev`，另开终端跑
+纯浏览器才暴露的问题（编辑器渲染、装饰、运行时异常）用真机自检兜底。它跑在 Playwright 的无头浏览器里，默认用 WebKit——也就是 Safari 的引擎，所以不需要系统里装 Chrome；换引擎也行：
 
 ```sh
-npm run smoke                             # 只确认首页能渲染、没有运行时异常
-SMOKE_NOTE="重要密码.md" npm run smoke      # 顺带打开一篇笔记检查内容
+npm run smoke:setup                                     # 第一次先装浏览器（WebKit，约 300MB）
+npm run dev                                             # 另开一个终端
+npm run smoke                                           # 默认检查 http://127.0.0.1:3000
+SMOKE_NOTE="重要密码.md" npm run smoke                    # 顺带打开一篇笔记检查内容
+SMOKE_BROWSER=chromium npm run smoke                    # 换引擎（先 npx playwright-core install chromium）
+SMOKE_HEADFUL=1 npm run smoke                           # 想看着它自己点，就弹出真实窗口
 ```
 
-脚本用无头 Chrome 访问本地地址，会临时创建一个独立浏览器配置，不影响日常使用的浏览器。它会顺带点开侧栏「回收站」，确认面板能列出内容；这一步只看不改，不会动任何笔记。
+自检会点开笔记库下拉、侧栏「回收站」和「我的空间」里的设置，确认这些面板都能列出来。全程只看不改，不会动任何笔记。
 
 ## 暗色工作区与 AI 思考辅助
 
