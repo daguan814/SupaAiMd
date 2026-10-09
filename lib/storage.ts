@@ -8,6 +8,7 @@ import type {
   Annotation,
   ChatMessage,
   GraphFeedback,
+  TrashEntry,
 } from "./types";
 export const root = path.resolve(process.env.NOTES_DIR || "./data");
 export const hash = (value: string) =>
@@ -251,17 +252,150 @@ export async function move(from: string, to: string) {
   await writeOrders(mapped);
   return tree();
 }
+const trashDirectory = path.join(root, ".app", "trash");
+const trashIndex = path.join(root, ".app", "trash.json");
+/** 回收站记录除了列表要显示的字段，还带着删除前的元数据（图、对话、标签）。 */
+type TrashRecord = TrashEntry & { files: Record<string, string> };
+async function readTrashIndex(): Promise<TrashRecord[]> {
+  try {
+    const value = JSON.parse(await fs.readFile(trashIndex, "utf8"));
+    return Array.isArray(value) ? value : [];
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+}
+const writeTrashIndex = (records: TrashRecord[]) =>
+  atomic(trashIndex, JSON.stringify(records));
+/**
+ * 早期版本没记删除前的位置，回收站里的名字是「时间戳-uuid-原文件名」；
+ * 这种记录按文件名解析，放回时回到笔记库根目录。
+ */
+function legacyTrash(id: string, isDirectory: boolean): TrashEntry {
+  const matched = /^(\d{10,})-([0-9a-f-]{36})-(.+)$/.exec(id);
+  const name = matched ? matched[3] : id;
+  const time = matched ? new Date(Number(matched[1])) : null;
+  return {
+    id,
+    name,
+    path: name,
+    type: isDirectory ? "folder" : "file",
+    deletedAt: time && !Number.isNaN(time.getTime()) ? time.toISOString() : "",
+  };
+}
+export async function trashList(): Promise<TrashEntry[]> {
+  await init();
+  await fs.mkdir(trashDirectory, { recursive: true });
+  const records = await readTrashIndex();
+  const known = new Map(records.map((record) => [record.id, record]));
+  const list: TrashEntry[] = [];
+  for (const id of await fs.readdir(trashDirectory)) {
+    if (id.startsWith(".")) continue;
+    const record = known.get(id);
+    if (record) {
+      const { files, ...entry } = record;
+      list.push(entry);
+      continue;
+    }
+    const stat = await fs.stat(path.join(trashDirectory, id)).catch(() => null);
+    if (!stat) continue;
+    const entry = legacyTrash(id, stat.isDirectory());
+    list.push({
+      ...entry,
+      deletedAt: entry.deletedAt || stat.mtime.toISOString(),
+    });
+  }
+  return list.sort((a, b) => (a.deletedAt < b.deletedAt ? 1 : -1));
+}
 export async function trash(relative: string) {
   const file = await safe(relative);
-  const directory = path.join(root, ".app", "trash");
-  await fs.mkdir(directory, { recursive: true });
-  await fs.rename(
-    file,
-    path.join(
-      directory,
-      Date.now() + "-" + randomUUID() + "-" + path.basename(file),
-    ),
-  );
+  await init();
+  await fs.mkdir(trashDirectory, { recursive: true });
+  const stat = await fs.stat(file);
+  const files = await listFiles(relative);
+  const carried: Record<string, string> = {};
+  for (const item of files) {
+    const value = await meta(item);
+    if (Object.keys(value).length) carried[item] = JSON.stringify(value);
+  }
+  const id = Date.now() + "-" + randomUUID() + "-" + path.basename(file);
+  await fs.rename(file, path.join(trashDirectory, id));
+  const records = await readTrashIndex();
+  records.push({
+    id,
+    name: path.basename(file),
+    path: relative,
+    type: stat.isDirectory() ? "folder" : "file",
+    deletedAt: new Date().toISOString(),
+    files: carried,
+  });
+  await writeTrashIndex(records);
+  for (const item of files) await fs.rm(metadata(item), { force: true });
+  return tree();
+}
+async function findTrash(id: string) {
+  if (!id || id.startsWith(".") || /[\\/]/.test(id))
+    throw new UserError("回收站项目无效");
+  const source = path.join(trashDirectory, id);
+  const stat = await fs.stat(source).catch(() => null);
+  if (!stat) throw new UserError("回收站里已经没有这一项", 404);
+  const records = await readTrashIndex();
+  const record = records.find((item) => item.id === id);
+  const entry = record
+    ? {
+        id: record.id,
+        name: record.name,
+        path: record.path,
+        type: record.type,
+        deletedAt: record.deletedAt,
+      }
+    : legacyTrash(id, stat.isDirectory());
+  return { source, record, entry, records };
+}
+/** 把回收站里的笔记放回原位；原位置被占用时明确报错，不覆盖现在的笔记。 */
+export async function restore(id: string) {
+  await init();
+  const { source, record, entry, records } = await findTrash(id);
+  const parent = path.posix.dirname(entry.path);
+  const parentExists =
+    parent && parent !== "."
+      ? await fs
+          .stat(path.join(root, parent))
+          .then((stat) => stat.isDirectory())
+          .catch(() => false)
+      : true;
+  const to =
+    parentExists && parent !== "." ? parent + "/" + entry.name : entry.name;
+  const target = await safe(to);
+  if (
+    await fs.stat(target).then(
+      () => true,
+      () => false,
+    )
+  )
+    throw new UserError("原位置已经有同名的笔记，请先改名或删除它", 409);
+  await fs.rename(source, target);
+  for (const [from, value] of Object.entries(record?.files || {}))
+    await atomic(metadata(to + from.slice(entry.path.length)), value);
+  await writeTrashIndex(records.filter((item) => item.id !== id));
+  return tree();
+}
+export async function purge(id: string) {
+  await init();
+  const { source, records } = await findTrash(id);
+  await fs.rm(source, { recursive: true, force: true });
+  await writeTrashIndex(records.filter((item) => item.id !== id));
+  return tree();
+}
+export async function emptyTrash() {
+  await init();
+  for (const id of await fs.readdir(trashDirectory).catch(() => []))
+    if (!id.startsWith("."))
+      await fs.rm(path.join(trashDirectory, id), {
+        recursive: true,
+        force: true,
+      });
+  await writeTrashIndex([]);
   return tree();
 }
 

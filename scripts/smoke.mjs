@@ -130,6 +130,26 @@ try {
     console.log("只检查了首页（设置 SMOKE_NOTE 可以顺带打开一篇笔记）");
   }
 
+  // 回收站只看不动：点开面板确认能列出内容，不改任何笔记。
+  // 笔记库还在加载时按钮还没接上事件，所以这里点几次，直到面板真的出现。
+  let opened = false;
+  for (let attempt = 0; attempt < 10 && !opened; attempt++) {
+    if (await evaluate(`!!document.querySelector(".trash-button")`)) {
+      await evaluate(`document.querySelector(".trash-button").click()`);
+      opened = await waitFor(`!!document.querySelector(".trash-modal")`, 2000);
+    }
+    if (!opened) await sleep(500);
+  }
+  if (!opened) failures.push("侧栏回收站按钮打不开面板");
+  else {
+    const panel = await evaluate(`({
+      title: (document.querySelector(".trash-modal h2") || {}).textContent || "",
+      items: document.querySelectorAll(".trash-item").length,
+    })`);
+    console.log("回收站自检:", JSON.stringify(panel));
+    if (panel?.title !== "回收站") failures.push("回收站面板标题不对");
+  }
+
   const overlay = await evaluate(
     `(document.body.innerText || "").includes("Runtime ")`,
   );

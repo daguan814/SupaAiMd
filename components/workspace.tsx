@@ -36,14 +36,15 @@ import {
   ArrowUp,
   ArrowDown,
   Trash2,
+  RotateCcw,
 } from "lucide-react";
-import type { Entry, Note } from "@/lib/types";
+import type { Entry, Note, TrashEntry } from "@/lib/types";
 import pkg from "../package.json";
 const Editor = dynamic(() => import("@uiw/react-codemirror"), { ssr: false });
 const GraphView = dynamic(() => import("./graph-view"), { ssr: false });
 const version = "V" + pkg.version;
 const welcome =
-  "# 给想法一个安放的地方\n\n不必一开始就写得很好。先记录，思路会在书写中慢慢清晰。\n\n## 我想记录什么\n\n- 今天发生的事情，以及我的感受\n- 一个还不成熟，但值得留下的想法\n- 工作和学习中的发现\n\n## 从记录到理解\n\n写完后，点击「AI 润色」，让语言更顺畅，同时保留自己的意思。\n\n点击「生成关系图」，把笔记里的观点、原因与结论连起来。\n\n> 文字留下细节，关系图帮助我看见全貌。\n";
+  "# 给想法一个安放的地方\n\n不必一开始就写得很好。先记录，思路会在书写中慢慢清晰。\n\n## 我想记录什么\n\n- 今天发生的事情，以及我的感受\n- 一个还不成熟，但值得留下的想法\n- 工作和学习中的发现\n\n## 从记录到理解\n\n点击「生成关系图」，把笔记里的观点、原因与结论连起来。\n\n有话想说时，点开「和 AI 聊天」，让它陪你把这页笔记聊清楚。\n\n> 文字留下细节，关系图帮助我看见全貌。\n";
 type Dialog = {
   kind: "file" | "folder" | "move" | "trash";
   path: string;
@@ -65,6 +66,17 @@ function count(entries: Entry[]): number {
 }
 const parentOf = (path: string) =>
   path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+/** 回收站里显示“多久之前删的”，超过一周就直接写日期。 */
+function deletedLabel(value: string): string {
+  const time = new Date(value);
+  if (!value || Number.isNaN(time.getTime())) return "时间不详";
+  const minutes = Math.floor((Date.now() - time.getTime()) / 60000);
+  if (minutes < 1) return "刚刚删除";
+  if (minutes < 60) return `${minutes} 分钟前删除`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)} 小时前删除`;
+  if (minutes < 10080) return `${Math.floor(minutes / 1440)} 天前删除`;
+  return time.toLocaleDateString("zh-CN") + " 删除";
+}
 function findTreeEntry(list: Entry[], path: string): Entry | undefined {
   for (const entry of list) {
     if (entry.path === path) return entry;
@@ -102,6 +114,9 @@ export default function Workspace() {
   const [instruction, setInstruction] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [trash, setTrash] = useState<TrashEntry[]>([]);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashConfirm, setTrashConfirm] = useState<string | null>(null);
   const [tagAnchor, setTagAnchor] = useState<TagAnchor | null>(null);
   const [tagMenu, setTagMenu] = useState<TagMenu | null>(null);
   const [customLabel, setCustomLabel] = useState("");
@@ -161,6 +176,16 @@ export default function Workspace() {
       document.removeEventListener("keydown", escape);
     };
   }, [tagMenu, tagAnchor]);
+  useEffect(() => {
+    if (!trashOpen) return;
+    const escape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || busyRef.current) return;
+      setTrashOpen(false);
+      setTrashConfirm(null);
+    };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [trashOpen]);
   const current = useRef<Note | null>(null),
     draft = useRef(""),
     pending = useRef<Promise<void> | null>(null),
@@ -205,6 +230,7 @@ export default function Workspace() {
       const data = await api("/api/workspace");
       setEntries(data.tree);
       setAi(data.aiConfigured);
+      setTrash(data.trash || []);
       if (!current.current) {
         let last: string | null = null;
         try {
@@ -292,10 +318,9 @@ export default function Workspace() {
       setMenu(null);
       setInstruction("");
     });
-  const aiAction = (action: "polish" | "graph" | "revise") =>
+  const aiAction = (action: "graph" | "revise") =>
     run(
       {
-        polish: "正在整理文字与排版",
         graph: "正在规划关系图",
         revise: "正在按评论修改图",
       }[action],
@@ -311,8 +336,7 @@ export default function Workspace() {
             ...(action === "revise" ? { instruction } : {}),
           }),
         );
-        if (action === "polish") setStatus("已润色并保存");
-        if (action === "graph" || action === "revise") setMode("graph");
+        setMode("graph");
         if (action === "revise") setInstruction("");
       },
     );
@@ -392,15 +416,14 @@ export default function Workspace() {
       if (!message || !n) return;
       await flush();
       const latest = current.current!;
-      const next: Note = await api("/api/workspace", {
-        action: "assist",
-        path: latest.path,
-        hash: latest.hash,
-        message,
-      });
-      apply(next);
-      setChatInput("");
-      if (next.content !== latest.content) setStatus("已按你的要求改好");
+      apply(
+        await api("/api/workspace", {
+          action: "assist",
+          path: latest.path,
+          hash: latest.hash,
+          message,
+        }),
+      );
     });
   const clearChat = () =>
     run("正在清空对话", async () => {
@@ -413,6 +436,32 @@ export default function Workspace() {
           hash: n.hash,
         }),
       );
+    });
+  const trashAction = (
+    action: "restore" | "purge" | "emptyTrash",
+    id: string,
+  ) =>
+    run(
+      {
+        restore: "正在恢复",
+        purge: "正在删除",
+        emptyTrash: "正在清空回收站",
+      }[action],
+      async () => {
+        await flush();
+        const data = await api("/api/workspace", { action, path: id });
+        setEntries(data.tree);
+        setTrash(data.trash);
+        setTrashConfirm(null);
+        setStatus(action === "restore" ? "已恢复" : "已从回收站删除");
+      },
+    );
+  const openTrash = () =>
+    run("正在打开回收站", async () => {
+      const data = await api("/api/workspace?trash=1");
+      setTrash(data.trash);
+      setTrashConfirm(null);
+      setTrashOpen(true);
     });
   const saveOrder = (parent: string, ordered: string[]) =>
     void run("保存顺序", async () => {
@@ -544,6 +593,7 @@ export default function Workspace() {
           path: dialog.path,
         });
         setEntries(data.tree);
+        setTrash(data.trash);
         if (
           current.current &&
           (current.current.path === dialog.path ||
@@ -902,6 +952,18 @@ export default function Workspace() {
           >
             <Upload size={15} /> 导入 Markdown
           </button>
+          <button
+            className="trash-button"
+            disabled={!!busy}
+            aria-label="打开回收站"
+            title="回收站：删掉的笔记还能找回来"
+            onClick={() => void openTrash()}
+          >
+            <Trash2 size={15} /> 回收站
+            {trash.length > 0 && (
+              <span className="trash-count">{trash.length}</span>
+            )}
+          </button>
           <input
             ref={upload}
             type="file"
@@ -982,7 +1044,7 @@ export default function Workspace() {
               <button
                 className="quiet-button"
                 disabled={!!busy}
-                title="恢复上次 AI 润色前的正文"
+                title="恢复上一次被 AI 改写前的正文"
                 onClick={() =>
                   void run("恢复中", async () => {
                     await flush();
@@ -1001,13 +1063,6 @@ export default function Workspace() {
                 <span>恢复原文</span>
               </button>
             )}
-            <button
-              className="secondary"
-              disabled={!note || !!busy}
-              onClick={() => void aiAction("polish")}
-            >
-              <Sparkles size={15} /> AI 润色
-            </button>
             <button
               className={"secondary" + (chatOpen ? " active" : "")}
               disabled={!note || !!busy}
@@ -1046,7 +1101,7 @@ export default function Workspace() {
         {!ai && (
           <div className="notice config">
             <Sparkles size={14} /> AI 尚未配置，设置服务器的 DeepSeek
-            密钥后即可润色和生成关系图。
+            密钥后即可聊天和生成关系图。
           </div>
         )}
         {busy && (
@@ -1069,7 +1124,8 @@ export default function Workspace() {
               </h1>
               <p>
                 从一句话开始，记录生活、灵感与发现。
-                <br />让 AI 整理语言，让关系图连接你的思考。
+                <br />
+                让关系图连接你的思考，让文字留在你手里。
               </p>
               <button
                 className="primary"
@@ -1088,7 +1144,7 @@ export default function Workspace() {
                   <FileText size={16} /> Markdown 原文存储
                 </span>
                 <span>
-                  <Sparkles size={16} /> 保留你的表达
+                  <MessageSquare size={16} /> 和 AI 聊你的想法
                 </span>
                 <span>
                   <Network size={16} /> 看见观点之间的联系
@@ -1373,11 +1429,140 @@ export default function Workspace() {
               className="danger"
               onClick={() => menuAction("trash")}
             >
-              <Trash2 size={16} /> 移到回收目录
+              <Trash2 size={16} /> 移到回收站
             </button>
           </div>,
           document.body,
         )}
+      {trashOpen && (
+        <div className="modal-backdrop">
+          <div className="modal trash-modal" role="dialog" aria-label="回收站">
+            <button
+              type="button"
+              className="modal-close icon-button"
+              aria-label="关闭"
+              disabled={!!busy}
+              onClick={() => {
+                setTrashOpen(false);
+                setTrashConfirm(null);
+              }}
+            >
+              <X size={18} />
+            </button>
+            <h2>回收站</h2>
+            <p>
+              删掉的笔记和文件夹都留在这里，可以放回原位。服务器不会自动清理，除非你在这里彻底删除。
+            </p>
+            {trash.length === 0 ? (
+              <p className="trash-empty">回收站是空的。</p>
+            ) : (
+              <ul className="trash-list">
+                {trash.map((item) => (
+                  <li className="trash-item" key={item.id}>
+                    {item.type === "folder" ? (
+                      <Folder size={16} />
+                    ) : (
+                      <FileText size={16} />
+                    )}
+                    <span className="trash-name">
+                      {item.name.replace(/\.md$/, "")}
+                      <small>
+                        {item.path === item.name ? "笔记库" : item.path} ·{" "}
+                        {deletedLabel(item.deletedAt)}
+                      </small>
+                    </span>
+                    {trashConfirm === item.id ? (
+                      <>
+                        <button
+                          type="button"
+                          className="quiet-button"
+                          disabled={!!busy}
+                          onClick={() => setTrashConfirm(null)}
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={!!busy}
+                          onClick={() => void trashAction("purge", item.id)}
+                        >
+                          彻底删除
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={!!busy}
+                          onClick={() => void trashAction("restore", item.id)}
+                        >
+                          <RotateCcw size={14} /> 恢复
+                        </button>
+                        <button
+                          type="button"
+                          className="quiet-button danger"
+                          disabled={!!busy}
+                          onClick={() => setTrashConfirm(item.id)}
+                        >
+                          彻底删除
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="modal-actions">
+              {trashConfirm === "*" ? (
+                <>
+                  <button
+                    type="button"
+                    className="quiet-button"
+                    disabled={!!busy}
+                    onClick={() => setTrashConfirm(null)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={!!busy}
+                    onClick={() => void trashAction("emptyTrash", "")}
+                  >
+                    清空回收站
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="quiet-button"
+                    disabled={!!busy}
+                    onClick={() => {
+                      setTrashOpen(false);
+                      setTrashConfirm(null);
+                    }}
+                  >
+                    关闭
+                  </button>
+                  {trash.length > 0 && (
+                    <button
+                      type="button"
+                      className="quiet-button danger"
+                      disabled={!!busy}
+                      onClick={() => setTrashConfirm("*")}
+                    >
+                      清空回收站
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {dialog && (
         <div className="modal-backdrop">
           <form
@@ -1403,11 +1588,11 @@ export default function Workspace() {
                   ? "新建文件夹"
                   : dialog.kind === "move"
                     ? "重命名"
-                    : "移到回收目录"}
+                    : "移到回收站"}
             </h2>
             <p>
               {dialog.kind === "trash"
-                ? `「${dialog.path}」将从笔记库移除，原文件会保留在服务器回收目录。`
+                ? `「${dialog.path}」将移入回收站，之后可以在侧栏「回收站」里恢复或彻底删除。`
                 : dialog.kind === "move"
                   ? "只改名字；要换文件夹或调整顺序，直接拖动这一项。"
                   : `保存位置：${dialog.path || "笔记库"}`}

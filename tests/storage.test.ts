@@ -7,7 +7,7 @@ const folder = await fs.mkdtemp(path.join(os.tmpdir(), "moxu-test-"));
 process.env.NOTES_DIR = folder;
 const s = await import("../lib/storage");
 const { validateGraph } = await import("../lib/ai");
-test("笔记持久化、冲突保护、润色恢复、移动和回收", async () => {
+test("笔记持久化、冲突保护、改前版本恢复、移动和回收", async () => {
   try {
     await s.create("学习", "folder");
     await s.create("学习/记录.md", "file");
@@ -41,10 +41,92 @@ test("笔记持久化、冲突保护、润色恢复、移动和回收", async ()
     assert.deepEqual(moved.graph, graph);
     await s.trash("阅读");
     assert.deepEqual(await s.tree(), []);
-    const trash = await fs.readdir(path.join(folder, ".app/trash"));
-    assert.equal(trash.length, 1);
+    const files = await fs.readdir(path.join(folder, ".app/trash"));
+    assert.equal(files.length, 1);
+    const [trashed] = await s.trashList();
+    assert.equal(trashed.name, "阅读");
+    assert.equal(trashed.path, "阅读");
+    assert.equal(trashed.type, "folder");
+    assert.ok(trashed.deletedAt);
+    // 放回原位时，图和标签这些配套元数据也跟着回来
+    await s.restore(trashed.id);
+    assert.deepEqual(
+      (await s.tree()).map((e) => e.path),
+      ["阅读"],
+    );
+    assert.deepEqual((await s.read("阅读/记录.md")).graph, graph);
+    assert.deepEqual(await s.trashList(), []);
   } finally {
     await fs.rm(folder, { recursive: true, force: true });
+  }
+});
+test("回收站：列出、拒绝覆盖同名、恢复、彻底删除和清空", async () => {
+  await s.init();
+  try {
+    await s.create("旧笔记.md", "file");
+    let note = await s.read("旧笔记.md");
+    note = await s.save(note.path, "旧的内容", note.hash);
+    await s.trash("旧笔记.md");
+    await s.create("旧笔记.md", "file");
+    await s.create("另一篇.md", "file");
+    const [trashed] = await s.trashList();
+    assert.equal(trashed.name, "旧笔记.md");
+    assert.equal(trashed.type, "file");
+    // 原位已经有同名笔记时不能悄悄覆盖
+    await assert.rejects(() => s.restore(trashed.id), /已经有同名/);
+    await s.trash("另一篇.md");
+    const list = await s.trashList();
+    assert.equal(list.length, 2);
+    assert.equal(list[0].name, "另一篇.md");
+    await s.purge(list[1].id);
+    assert.equal((await s.trashList()).length, 1);
+    assert.deepEqual(
+      (await s.tree()).map((e) => e.path),
+      ["旧笔记.md"],
+    );
+    await s.restore(list[0].id);
+    assert.deepEqual((await s.tree()).map((e) => e.path).sort(), [
+      "另一篇.md",
+      "旧笔记.md",
+    ]);
+    assert.deepEqual(await s.trashList(), []);
+    await s.create("再删.md", "file");
+    await s.trash("再删.md");
+    assert.equal((await s.trashList()).length, 1);
+    await s.emptyTrash();
+    assert.deepEqual(await s.trashList(), []);
+    assert.deepEqual((await s.tree()).map((e) => e.path).sort(), [
+      "另一篇.md",
+      "旧笔记.md",
+    ]);
+  } finally {
+    await fs.rm(s.root, { recursive: true, force: true });
+  }
+});
+test("旧版回收站条目：按文件名解析，能放回笔记库", async () => {
+  await s.init();
+  try {
+    const directory = path.join(s.root, ".app/trash");
+    await fs.mkdir(directory, { recursive: true });
+    const legacy =
+      "1791175229883-d7bbef8e-afd9-41b0-bda2-bf131ca6eb68-决策图示例.md";
+    await fs.writeFile(path.join(directory, legacy), "# 决策\n", "utf8");
+    const [entry] = await s.trashList();
+    assert.equal(entry.name, "决策图示例.md");
+    assert.equal(entry.type, "file");
+    assert.equal(entry.path, "决策图示例.md");
+    assert.ok(!Number.isNaN(new Date(entry.deletedAt).getTime()));
+    await s.restore(entry.id);
+    assert.deepEqual(
+      (await s.tree()).map((e) => e.path),
+      ["决策图示例.md"],
+    );
+    assert.equal(
+      await fs.readFile(path.join(s.root, "决策图示例.md"), "utf8"),
+      "# 决策\n",
+    );
+  } finally {
+    await fs.rm(s.root, { recursive: true, force: true });
   }
 });
 test("拒绝越界路径、隐藏文件和符号链接", async () => {

@@ -4,6 +4,14 @@ export type Entry = {
   type: "file" | "folder";
   children?: Entry[];
 };
+/** 回收站里的一项；path 是删除前的相对路径，用来放回原位。 */
+export type TrashEntry = {
+  id: string;
+  name: string;
+  path: string;
+  type: "file" | "folder";
+  deletedAt: string;
+};
 export type GraphRole =
   | "material"
   | "reasoning"
@@ -35,7 +43,7 @@ export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
-  /** edit 表示这条消息是「让 AI 直接改正文」的往返。 */
+  /** 旧版聊天会按作者要求改写正文，这类往返标了 edit；现在聊天只讨论，不再产生这种消息。 */
   kind?: "edit";
   createdAt: string;
 };

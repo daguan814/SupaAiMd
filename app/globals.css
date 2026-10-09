@@ -244,6 +244,61 @@ input:focus-visible {
   font-size: 12px;
   color: #959da9;
 }
+.trash-button {
+  margin: 6px 20px 15px;
+  justify-content: flex-start;
+  font-size: 12px;
+  color: #959da9;
+}
+.trash-button:hover {
+  color: #c3c7d1;
+}
+.trash-count {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: #30333c;
+  color: #aab1c0;
+  font-size: 10px;
+}
+.modal.trash-modal {
+  width: min(560px, 92vw);
+}
+.trash-empty {
+  margin-top: 16px;
+}
+.trash-list {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 44vh;
+  overflow: auto;
+}
+.trash-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: #c3c7d1;
+}
+.trash-item:hover {
+  background: #23262f;
+}
+.trash-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trash-name small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  color: #959da9;
+}
 .sidebar-bottom {
   border-top: 1px solid #30333b;
   display: flex;
@@ -1582,16 +1637,6 @@ body {
 .chat-input {
   border-top: 1px solid #30333b;
   padding: 12px 15px 14px;
-}
-.chat-badge {
-  margin-left: 6px;
-  padding: 1px 5px;
-  border: 1px solid #4a5470;
-  border-radius: 3px;
-  background: #2b3145;
-  color: #a9b6dc;
-  font-style: normal;
-  font-size: 9.5px;
 }
 .chat-input textarea {
   width: 100%;

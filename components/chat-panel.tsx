@@ -5,8 +5,8 @@ import type { ChatMessage } from "@/lib/types";
 
 const suggestions = [
   "这篇笔记主要想说什么？",
-  "把表格按金额从大到小排序",
-  "给每段加一个短小标题",
+  "哪一段还能写得更清楚？",
+  "这个结论的依据够吗？",
 ];
 
 export default function ChatPanel({
@@ -63,8 +63,8 @@ export default function ChatPanel({
         {messages.length === 0 ? (
           <div className="chat-empty">
             <p>
-              AI 已经读过这篇笔记的正文。你可以问它任何与这篇内容有关的问题，
-              也可以直接让它改——说清楚要改什么，它就照做，改前的版本可以「恢复原文」退回。
+              AI 已经读过这篇笔记的正文，只和你讨论，不会动手改你的字。
+              内容、结构、说法上的问题都可以问。
             </p>
             {suggestions.map((text) => (
               <button key={text} onClick={() => onChange(text)}>
@@ -78,12 +78,7 @@ export default function ChatPanel({
               className={`chat-message ${message.role}`}
               key={message.id}
             >
-              <span>
-                {message.role === "user" ? "我" : "AI"}
-                {message.kind === "edit" && (
-                  <em className="chat-badge">改正文</em>
-                )}
-              </span>
+              <span>{message.role === "user" ? "我" : "AI"}</span>
               <p>{message.content}</p>
             </article>
           ))
@@ -101,7 +96,7 @@ export default function ChatPanel({
           value={value}
           maxLength={2000}
           aria-label="对 AI 说"
-          placeholder="问点什么，或者直接说怎么改，例如「支出项目按金额从大到小排」"
+          placeholder="问点什么，例如「这篇在讲什么」「哪段还能更清楚」"
           disabled={busy}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {

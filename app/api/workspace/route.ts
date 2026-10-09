@@ -26,14 +26,14 @@ export async function GET(request: NextRequest) {
   try {
     await store.init();
     const relative = request.nextUrl.searchParams.get("path");
-    return NextResponse.json(
-      relative
-        ? await store.read(relative)
-        : {
-            tree: await store.tree(),
-            aiConfigured: !!process.env.DEEPSEEK_API_KEY,
-          },
-    );
+    if (relative) return NextResponse.json(await store.read(relative));
+    if (request.nextUrl.searchParams.get("trash"))
+      return NextResponse.json({ trash: await store.trashList() });
+    return NextResponse.json({
+      tree: await store.tree(),
+      aiConfigured: !!process.env.DEEPSEEK_API_KEY,
+      trash: await store.trashList(),
+    });
   } catch (e) {
     return error(e);
   }
@@ -62,27 +62,17 @@ export async function POST(request: NextRequest) {
       )
         throw new store.UserError("请先写下要对 AI 说的话（最多 2000 字）");
       const message = b.message.trim();
-      const output = await ai.assist(note.content, note.chat, message);
-      const mark = output.changed ? { kind: "edit" as const } : {};
+      const reply = await ai.assist(note.content, note.chat, message);
       const history = [
-        ...note.chat.map(({ role, content, kind }) => ({
-          role,
-          content,
-          kind,
-        })),
-        { role: "user" as const, content: message, ...mark },
-        { role: "assistant" as const, content: output.reply, ...mark },
+        ...note.chat.map(({ role, content }) => ({ role, content })),
+        { role: "user" as const, content: message },
+        { role: "assistant" as const, content: reply },
       ];
       return NextResponse.json(
-        await store.exclusive(async () => {
-          const saved = output.changed
-            ? await store.save(b.path, output.markdown!, b.hash, true)
-            : note;
-          return store.putChat(b.path, history, saved.hash);
-        }),
+        await store.exclusive(() => store.putChat(b.path, history, b.hash)),
       );
     }
-    if (["polish", "graph", "revise"].includes(b.action)) {
+    if (["graph", "revise"].includes(b.action)) {
       const note = await store.read(b.path);
       if (note.hash !== b.hash)
         throw new store.UserError("正文已更新，请先保存", 409);
@@ -99,10 +89,6 @@ export async function POST(request: NextRequest) {
         graph: note.graph,
         instruction: b.instruction,
       });
-      if (b.action === "polish")
-        return NextResponse.json(
-          await store.exclusive(() => store.save(b.path, output, b.hash, true)),
-        );
       let parsed;
       try {
         parsed = JSON.parse(output);
@@ -169,7 +155,25 @@ export async function POST(request: NextRequest) {
           if (typeof b.to !== "string") throw new store.UserError("请求无效");
           return NextResponse.json({ tree: await store.move(b.path, b.to) });
         case "trash":
-          return NextResponse.json({ tree: await store.trash(b.path) });
+          return NextResponse.json({
+            tree: await store.trash(b.path),
+            trash: await store.trashList(),
+          });
+        case "restore":
+          return NextResponse.json({
+            tree: await store.restore(b.path),
+            trash: await store.trashList(),
+          });
+        case "purge":
+          return NextResponse.json({
+            tree: await store.purge(b.path),
+            trash: await store.trashList(),
+          });
+        case "emptyTrash":
+          return NextResponse.json({
+            tree: await store.emptyTrash(),
+            trash: await store.trashList(),
+          });
         default:
           throw new store.UserError("未知操作");
       }

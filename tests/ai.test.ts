@@ -1,150 +1,58 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assist, complete, keptRatio } from "../lib/ai";
+import { assist } from "../lib/ai";
 
-test("keptRatio 只统计原样保留的句子", () => {
-  assert.equal(
-    keptRatio("今天去超市买牛奶。明天再决定。", "今天去超市买牛奶。明天再决定。"),
-    1,
-  );
-  assert.equal(
-    keptRatio("今天去超市买牛奶。明天再决定。", "今天去超市买了牛奶。改天再决定吧。"),
-    0,
-  );
-  assert.equal(keptRatio("```\nconst a = 1;\n```", "```\nconst a = 2;\n```"), 0);
-});
-
-test("润色重试无变化结果，并拒绝空白差异和不完整输出", async (t) => {
+test("和 AI 聊天：只回话，不动正文", async (t) => {
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.DEEPSEEK_API_KEY;
   process.env.DEEPSEEK_API_KEY = "test-key";
-  const source = "我想记录想法。\n\n整理后更容易回顾。";
-  const edited = "# 记录想法\n\n## 目的\n\n整理想法，让回顾更容易。";
-  const respond = (content: string, finish_reason = "stop") =>
+  const source = "# 支出项目\n\n本月支出 1200 元，比上个月少。";
+  const answer = (content: string, finish_reason = "stop") =>
     Response.json({ choices: [{ message: { content }, finish_reason }] });
   try {
-    await t.test("第一次无变化，重试返回整理后的正文", async () => {
-      let calls = 0;
-      globalThis.fetch = async () => respond(++calls === 1 ? source : edited);
-      assert.equal(await complete(source, "polish"), edited);
-      assert.equal(calls, 2);
-    });
-    await t.test("真正改写了句子就通过", async () => {
+    await t.test("回答原样返回给作者", async () => {
       let calls = 0;
       globalThis.fetch = async () => {
         calls++;
-        return respond(
-          "# 记录想法\n\n想记录的时候就写下来，以后回头翻会轻松很多。",
-        );
+        return answer("这篇记的是本月的支出总额，并和上月做了比较。");
       };
-      await complete(source, "polish");
+      assert.equal(
+        await assist(source, [], "这篇在讲什么？"),
+        "这篇记的是本月的支出总额，并和上月做了比较。",
+      );
       assert.equal(calls, 1);
     });
-    await t.test("只加标题和列表、句子原样保留，算只改排版", async () => {
-      let calls = 0;
-      globalThis.fetch = async () => {
-        calls++;
-        return respond("# 记录想法\n\n- 我想记录想法。\n- 整理后更容易回顾。");
+    await t.test("请求里带上正文和最近的对话，并且不许 AI 改正文", async () => {
+      let body: { messages: { role: string; content: string }[] } = {
+        messages: [],
       };
-      await assert.rejects(complete(source, "polish"), /只改了排版/);
-      assert.equal(calls, 2);
-    });
-    await t.test("只改空白不算有效修改，两次无变化后明确失败", async () => {
-      let calls = 0;
-      globalThis.fetch = async () => {
-        calls++;
-        return respond(source.replace(/\n\n/g, "\n\n\n"));
+      globalThis.fetch = async (_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return answer("好。");
       };
-      await assert.rejects(complete(source, "polish"), /未做出有效修改/);
-      assert.equal(calls, 2);
+      await assist(
+        source,
+        [
+          { role: "user", content: "在吗" },
+          { role: "assistant", content: "在的" },
+        ],
+        "哪段还能更清楚？",
+      );
+      assert.match(body.messages[0].content, /不要改写/);
+      const texts = body.messages.map((message) => message.content);
+      assert.ok(texts.includes(source));
+      assert.ok(texts.includes("在吗"));
+      assert.equal(body.messages.at(-1)?.content, "哪段还能更清楚？");
     });
-    await t.test("截断内容不能用于覆盖正文", async () => {
-      globalThis.fetch = async () => respond(edited, "length");
-      await assert.rejects(complete(source, "polish"), /未返回完整内容/);
+    await t.test("截断或空回复都算失败", async () => {
+      globalThis.fetch = async () => answer("说到一半", "length");
+      await assert.rejects(assist(source, [], "怎么样"), /未返回完整内容/);
+      globalThis.fetch = async () => answer("   ");
+      await assert.rejects(assist(source, [], "怎么样"), /未返回完整内容/);
     });
-  } finally {
-    globalThis.fetch = originalFetch;
-    if (originalKey === undefined) delete process.env.DEEPSEEK_API_KEY;
-    else process.env.DEEPSEEK_API_KEY = originalKey;
-  }
-});
-
-test("和 AI 对话：该改就改，只是提问就不动正文", async (t) => {
-  const originalFetch = globalThis.fetch;
-  const originalKey = process.env.DEEPSEEK_API_KEY;
-  process.env.DEEPSEEK_API_KEY = "test-key";
-  const source = [
-    "# 支出项目",
-    "",
-    "| 项目 | 金额 |",
-    "| --- | --- |",
-    "| 甲 | 200 |",
-    "| 乙 | 1000 |",
-  ].join("\n");
-  const changed = source.replace(
-    "| 甲 | 200 |\n| 乙 | 1000 |",
-    "| 乙 | 1000 |\n| 甲 | 200 |",
-  );
-  const answer = (payload: unknown, finish_reason = "stop") =>
-    Response.json({
-      choices: [
-        { message: { content: JSON.stringify(payload) }, finish_reason },
-      ],
-    });
-  try {
-    await t.test("要求修改时返回改好的正文", async () => {
-      let calls = 0;
-      globalThis.fetch = async () => {
-        calls++;
-        return answer({
-          changed: true,
-          reply: "已把支出按金额从大到小排序",
-          markdown: changed,
-        });
-      };
-      const result = await assist(source, [], "支出项目按金额从大到小排");
-      assert.equal(result.changed, true);
-      assert.equal(result.markdown, changed);
-      assert.equal(result.reply, "已把支出按金额从大到小排序");
-      assert.equal(calls, 1);
-    });
-    await t.test("只是提问就只回答，不动正文", async () => {
-      globalThis.fetch = async () =>
-        answer({
-          changed: false,
-          reply: "这篇记的是支出和收入。",
-          markdown: "",
-        });
-      const result = await assist(source, [], "这篇在讲什么？");
-      assert.equal(result.changed, false);
-      assert.equal(result.markdown, null);
-      assert.equal(result.reply, "这篇记的是支出和收入。");
-    });
-    await t.test("说改了但正文没变，重试后仍然如此就报错", async () => {
-      let calls = 0;
-      globalThis.fetch = async () => {
-        calls++;
-        return answer({ changed: true, reply: "改好了", markdown: source });
-      };
-      await assert.rejects(assist(source, [], "整理一下"), /没有真的改动正文/);
-      assert.equal(calls, 2);
-    });
-    await t.test("截断的输出不能覆盖正文", async () => {
-      globalThis.fetch = async () =>
-        answer({ changed: true, reply: "改好了", markdown: changed }, "length");
-      await assert.rejects(assist(source, [], "排序"), /未返回完整内容/);
-    });
-    await t.test("返回的不是合法 JSON 就报错", async () => {
-      globalThis.fetch = async () =>
-        Response.json({
-          choices: [
-            {
-              message: { content: "这是改好的正文" },
-              finish_reason: "stop",
-            },
-          ],
-        });
-      await assert.rejects(assist(source, [], "排序"), /格式无效/);
+    await t.test("没配密钥就直接报错", async () => {
+      delete process.env.DEEPSEEK_API_KEY;
+      await assert.rejects(assist(source, [], "在吗"), /配置 DeepSeek/);
     });
   } finally {
     globalThis.fetch = originalFetch;
