@@ -33,6 +33,7 @@ export async function GET(request: NextRequest) {
       tree: await store.tree(),
       aiConfigured: !!process.env.DEEPSEEK_API_KEY,
       trash: await store.trashList(),
+      libraries: await store.libraryList(),
     });
   } catch (e) {
     return error(e);
@@ -184,6 +185,23 @@ export async function POST(request: NextRequest) {
             tree: await store.emptyTrash(),
             trash: await store.trashList(),
           });
+        case "createLibrary":
+        case "useLibrary":
+        case "renameLibrary": {
+          if (b.action === "renameLibrary" && typeof b.to !== "string")
+            throw new store.UserError("请求无效");
+          const tree =
+            b.action === "createLibrary"
+              ? await store.createLibrary(b.path)
+              : b.action === "useLibrary"
+                ? await store.useLibrary(b.path)
+                : await store.renameLibrary(b.path, b.to);
+          return NextResponse.json({
+            tree,
+            trash: await store.trashList(),
+            libraries: await store.libraryList(),
+          });
+        }
         default:
           throw new store.UserError("未知操作");
       }

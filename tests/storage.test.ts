@@ -14,7 +14,10 @@ test("笔记持久化、冲突保护、改前版本恢复、移动和回收", as
     const original = await s.read("学习/记录.md");
     const written = await s.save(original.path, "# 我的想法", original.hash);
     assert.equal(
-      await fs.readFile(path.join(folder, written.path), "utf8"),
+      await fs.readFile(
+        path.join(folder, s.defaultLibrary, written.path),
+        "utf8",
+      ),
       "# 我的想法",
     );
     await assert.rejects(
@@ -41,7 +44,9 @@ test("笔记持久化、冲突保护、改前版本恢复、移动和回收", as
     assert.deepEqual(moved.graph, graph);
     await s.trash("阅读");
     assert.deepEqual(await s.tree(), []);
-    const files = await fs.readdir(path.join(folder, ".app/trash"));
+    const files = await fs.readdir(
+      path.join(folder, s.defaultLibrary, ".app/trash"),
+    );
     assert.equal(files.length, 1);
     const [trashed] = await s.trashList();
     assert.equal(trashed.name, "阅读");
@@ -106,7 +111,11 @@ test("回收站：列出、拒绝覆盖同名、恢复、彻底删除和清空",
 test("旧版回收站条目：按文件名解析，能放回笔记库", async () => {
   await s.init();
   try {
-    const directory = path.join(s.root, ".app/trash");
+    const directory = path.join(
+      s.root,
+      (await s.libraryList()).active,
+      ".app/trash",
+    );
     await fs.mkdir(directory, { recursive: true });
     const legacy =
       "1791175229883-d7bbef8e-afd9-41b0-bda2-bf131ca6eb68-决策图示例.md";
@@ -122,7 +131,10 @@ test("旧版回收站条目：按文件名解析，能放回笔记库", async ()
       ["决策图示例.md"],
     );
     assert.equal(
-      await fs.readFile(path.join(s.root, "决策图示例.md"), "utf8"),
+      await fs.readFile(
+        path.join(s.root, (await s.libraryList()).active, "决策图示例.md"),
+        "utf8",
+      ),
       "# 决策\n",
     );
   } finally {
@@ -141,7 +153,11 @@ test("拒绝越界路径、隐藏文件和符号链接", async () => {
       "a\\b.md",
     ])
       await assert.rejects(() => s.safe(p));
-    await fs.symlink(testRoot, path.join(s.root, "external"));
+    // 符号链接要放在笔记库里面才会被 safe() 检查到
+    await fs.symlink(
+      testRoot,
+      path.join(s.root, (await s.libraryList()).active, "external"),
+    );
     await assert.rejects(() => s.safe("external/a.md"), /符号链接/);
   } finally {
     await fs.rm(s.root, { recursive: true, force: true });

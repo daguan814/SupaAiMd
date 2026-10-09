@@ -37,6 +37,9 @@ import {
   ArrowDown,
   Trash2,
   RotateCcw,
+  Library,
+  ChevronDown,
+  Settings,
 } from "lucide-react";
 import type { Entry, Note, TrashEntry } from "@/lib/types";
 import pkg from "../package.json";
@@ -117,6 +120,20 @@ export default function Workspace() {
   const [trash, setTrash] = useState<TrashEntry[]>([]);
   const [trashOpen, setTrashOpen] = useState(false);
   const [trashConfirm, setTrashConfirm] = useState<string | null>(null);
+  const [libraries, setLibraries] = useState<{
+    names: string[];
+    active: string;
+  }>({ names: [], active: "" });
+  const [libraryMenu, setLibraryMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [settings, setSettings] = useState(false);
+  const [newLibrary, setNewLibrary] = useState("");
+  const [renaming, setRenaming] = useState<{
+    name: string;
+    value: string;
+  } | null>(null);
   const [tagAnchor, setTagAnchor] = useState<TagAnchor | null>(null);
   const [tagMenu, setTagMenu] = useState<TagMenu | null>(null);
   const [customLabel, setCustomLabel] = useState("");
@@ -140,14 +157,19 @@ export default function Workspace() {
   const menuRef = useRef<HTMLDivElement>(null);
   const tagMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!menu) return;
+    if (!menu && !libraryMenu) return;
     menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
     const close = (e: MouseEvent) => {
-      if (!(e.target as Element).closest(".file-menu,.tree-more"))
+      const target = e.target as Element;
+      if (!target.closest(".file-menu,.tree-more,.library-switch"))
         setMenu(null);
+      if (!target.closest(".library-menu,.library-switch"))
+        setLibraryMenu(null);
     };
     const escape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenu(null);
+      if (e.key !== "Escape") return;
+      setMenu(null);
+      setLibraryMenu(null);
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", escape);
@@ -155,7 +177,7 @@ export default function Workspace() {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", escape);
     };
-  }, [menu]);
+  }, [menu, libraryMenu]);
   useEffect(() => {
     if (!tagMenu && !tagAnchor) return;
     const close = (e: MouseEvent) => {
@@ -231,6 +253,7 @@ export default function Workspace() {
       setEntries(data.tree);
       setAi(data.aiConfigured);
       setTrash(data.trash || []);
+      if (data.libraries) setLibraries(data.libraries);
       if (!current.current) {
         let last: string | null = null;
         try {
@@ -464,6 +487,40 @@ export default function Workspace() {
       setTrashConfirm(null);
       setTrashOpen(true);
     });
+  /** 新建、切换、改名都走这里；换到别的库时把打开中的笔记收起来。 */
+  const libraryAction = (
+    action: "useLibrary" | "createLibrary" | "renameLibrary",
+    name: string,
+    to?: string,
+  ) =>
+    run(
+      {
+        useLibrary: "正在切换笔记库",
+        createLibrary: "正在新建笔记库",
+        renameLibrary: "正在改名",
+      }[action],
+      async () => {
+        await flush();
+        const data = await api("/api/workspace", {
+          action,
+          path: name,
+          ...(to === undefined ? {} : { to }),
+        });
+        setEntries(data.tree);
+        setTrash(data.trash);
+        setLibraries(data.libraries);
+        setLibraryMenu(null);
+        setRenaming(null);
+        if (data.libraries.active !== libraries.active) {
+          current.current = null;
+          draft.current = "";
+          setNote(null);
+          setText("");
+          setMode("note");
+          setChatOpen(false);
+        }
+      },
+    );
   const saveOrder = (parent: string, ordered: string[]) =>
     void run("保存顺序", async () => {
       setEntries(
@@ -896,9 +953,23 @@ export default function Workspace() {
             />
           </div>
           <div className="tree-heading">
-            <span>
-              笔记库 <small>{count(entries)}</small>
-            </span>
+            <button
+              className="library-switch"
+              aria-haspopup="menu"
+              aria-expanded={!!libraryMenu}
+              title="切换笔记库（新建、改名在设置里）"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setLibraryMenu(
+                  libraryMenu ? null : { x: rect.left, y: rect.bottom + 4 },
+                );
+              }}
+            >
+              <Library size={14} />
+              <span>{libraries.active || "笔记库"}</span>
+              <small>{count(entries)}</small>
+              <ChevronDown size={13} className={libraryMenu ? "flipped" : ""} />
+            </button>
             <div>
               <button
                 aria-label="新建文件夹"
@@ -976,14 +1047,24 @@ export default function Workspace() {
               e.target.value = "";
             }}
           />
-          <div className="sidebar-bottom">
+          <button
+            className="sidebar-bottom"
+            aria-label="打开设置"
+            title="设置"
+            onClick={() => {
+              setSettings(true);
+              setNewLibrary("");
+              setRenaming(null);
+              setLibraryMenu(null);
+            }}
+          >
             <span className="avatar">我</span>
             <div>
               我的空间
               <small>{version} · 每一个想法，都值得留下</small>
             </div>
-            <span className="online-dot" />
-          </div>
+            <Settings size={15} className="online-dot" />
+          </button>
         </aside>
       )}
       <main className={"main " + (mode === "graph" ? "graph-mode" : "")}>
@@ -1435,6 +1516,175 @@ export default function Workspace() {
           </div>,
           document.body,
         )}
+      {libraryMenu &&
+        createPortal(
+          <div
+            className="library-menu floating-menu"
+            role="menu"
+            aria-label="切换笔记库"
+            style={{ left: libraryMenu.x, top: libraryMenu.y }}
+          >
+            {libraries.names.map((name) => (
+              <button
+                key={name}
+                role="menuitem"
+                className={name === libraries.active ? "current" : ""}
+                disabled={!!busy || name === libraries.active}
+                onClick={() => void libraryAction("useLibrary", name)}
+              >
+                {name === libraries.active ? (
+                  <Check size={14} />
+                ) : (
+                  <Library size={14} />
+                )}
+                <span>{name}</span>
+              </button>
+            ))}
+            <div className="menu-divider" />
+            <button
+              role="menuitem"
+              onClick={() => {
+                setLibraryMenu(null);
+                setSettings(true);
+                setNewLibrary("");
+                setRenaming(null);
+              }}
+            >
+              <Settings size={15} /> 管理笔记库…
+            </button>
+          </div>,
+          document.body,
+        )}
+      {settings && (
+        <div className="modal-backdrop">
+          <div className="modal settings-modal" role="dialog" aria-label="设置">
+            <button
+              type="button"
+              className="modal-close icon-button"
+              aria-label="关闭"
+              disabled={!!busy}
+              onClick={() => {
+                setSettings(false);
+                setRenaming(null);
+              }}
+            >
+              <X size={18} />
+            </button>
+            <h2>设置</h2>
+            <p>
+              笔记库是笔记目录下的一层真实文件夹：每一本都有自己的一份笔记、关系图和回收站，切换只是换一层目录，互不影响。
+            </p>
+            <h3 className="settings-title">笔记库</h3>
+            <ul className="library-list">
+              {libraries.names.map((name) => (
+                <li
+                  key={name}
+                  className={
+                    "library-row" +
+                    (name === libraries.active ? " current" : "")
+                  }
+                >
+                  {renaming?.name === name ? (
+                    <form
+                      className="library-rename"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void libraryAction(
+                          "renameLibrary",
+                          name,
+                          renaming.value,
+                        );
+                      }}
+                    >
+                      <input
+                        autoFocus
+                        value={renaming.value}
+                        maxLength={40}
+                        aria-label="新的笔记库名称"
+                        onChange={(event) =>
+                          setRenaming({ name, value: event.target.value })
+                        }
+                      />
+                      <button
+                        className="primary"
+                        disabled={!!busy || !renaming.value.trim()}
+                      >
+                        保存
+                      </button>
+                      <button
+                        type="button"
+                        className="quiet-button"
+                        disabled={!!busy}
+                        onClick={() => setRenaming(null)}
+                      >
+                        取消
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <button
+                        className="library-name"
+                        disabled={!!busy}
+                        onClick={() => void libraryAction("useLibrary", name)}
+                      >
+                        <Library size={15} />
+                        <span>{name}</span>
+                        {name === libraries.active && (
+                          <em className="library-current">当前</em>
+                        )}
+                      </button>
+                      <button
+                        className="quiet-button"
+                        disabled={!!busy}
+                        onClick={() => setRenaming({ name, value: name })}
+                      >
+                        <Pencil size={13} /> 改名
+                      </button>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <form
+              className="library-create"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const name = newLibrary.trim();
+                if (!name) return;
+                setNewLibrary("");
+                void libraryAction("createLibrary", name);
+              }}
+            >
+              <input
+                value={newLibrary}
+                maxLength={40}
+                aria-label="新建笔记库"
+                placeholder="新建笔记库，例如「工作」"
+                onChange={(event) => setNewLibrary(event.target.value)}
+              />
+              <button
+                className="primary"
+                disabled={!!busy || !newLibrary.trim()}
+              >
+                新建
+              </button>
+            </form>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                disabled={!!busy}
+                onClick={() => {
+                  setSettings(false);
+                  setRenaming(null);
+                }}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {trashOpen && (
         <div className="modal-backdrop">
           <div className="modal trash-modal" role="dialog" aria-label="回收站">
