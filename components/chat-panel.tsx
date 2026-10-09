@@ -2,11 +2,12 @@
 import { useEffect, useRef } from "react";
 import { MessageSquare, Send, Trash2, X } from "lucide-react";
 import type { ChatMessage } from "@/lib/types";
+import { shouldSendOnEnter } from "@/lib/chat";
 
 const suggestions = [
   "这篇笔记主要想说什么？",
-  "哪一段还能写得更清楚？",
-  "这个结论的依据够吗？",
+  "把这段按时间顺序重排",
+  "把啰嗦的句子改短一点",
 ];
 
 export default function ChatPanel({
@@ -63,8 +64,8 @@ export default function ChatPanel({
         {messages.length === 0 ? (
           <div className="chat-empty">
             <p>
-              AI 已经读过这篇笔记的正文，只和你讨论，不会动手改你的字。
-              内容、结构、说法上的问题都可以问。
+              AI 已经读过这篇笔记的正文。可以问它问题，也可以直接让它改——
+              说清楚要改什么，它就动手，改前的版本可以「恢复原文」退回。
             </p>
             {suggestions.map((text) => (
               <button key={text} onClick={() => onChange(text)}>
@@ -78,7 +79,12 @@ export default function ChatPanel({
               className={`chat-message ${message.role}`}
               key={message.id}
             >
-              <span>{message.role === "user" ? "我" : "AI"}</span>
+              <span>
+                {message.role === "user" ? "我" : "AI"}
+                {message.kind === "edit" && (
+                  <em className="chat-badge">改正文</em>
+                )}
+              </span>
               <p>{message.content}</p>
             </article>
           ))
@@ -96,19 +102,27 @@ export default function ChatPanel({
           value={value}
           maxLength={2000}
           aria-label="对 AI 说"
-          placeholder="问点什么，例如「这篇在讲什么」「哪段还能更清楚」"
+          placeholder="问点什么，或者直接说怎么改，例如「把表格按金额从大到小排」"
           disabled={busy}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              onSend();
-            }
+            if (
+              !shouldSendOnEnter({
+                key: event.key,
+                shiftKey: event.shiftKey,
+                isComposing: event.nativeEvent.isComposing,
+                keyCode: event.keyCode,
+              })
+            )
+              return;
+            event.preventDefault();
+            onSend();
           }}
         />
         <button className="primary full" disabled={busy || !value.trim()}>
           <Send size={14} /> 发送给 AI
         </button>
+        <span className="chat-hint">回车发送，Shift + 回车换行</span>
       </form>
     </aside>
   );

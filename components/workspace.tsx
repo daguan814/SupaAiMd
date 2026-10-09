@@ -416,14 +416,15 @@ export default function Workspace() {
       if (!message || !n) return;
       await flush();
       const latest = current.current!;
-      apply(
-        await api("/api/workspace", {
-          action: "assist",
-          path: latest.path,
-          hash: latest.hash,
-          message,
-        }),
-      );
+      const next: Note = await api("/api/workspace", {
+        action: "assist",
+        path: latest.path,
+        hash: latest.hash,
+        message,
+      });
+      apply(next);
+      setChatInput("");
+      if (next.content !== latest.content) setStatus("已按你的要求改好");
     });
   const clearChat = () =>
     run("正在清空对话", async () => {

@@ -62,14 +62,24 @@ export async function POST(request: NextRequest) {
       )
         throw new store.UserError("请先写下要对 AI 说的话（最多 2000 字）");
       const message = b.message.trim();
-      const reply = await ai.assist(note.content, note.chat, message);
+      const output = await ai.assist(note.content, note.chat, message);
+      const mark = output.changed ? { kind: "edit" as const } : {};
       const history = [
-        ...note.chat.map(({ role, content }) => ({ role, content })),
-        { role: "user" as const, content: message },
-        { role: "assistant" as const, content: reply },
+        ...note.chat.map(({ role, content, kind }) => ({
+          role,
+          content,
+          kind,
+        })),
+        { role: "user" as const, content: message, ...mark },
+        { role: "assistant" as const, content: output.reply, ...mark },
       ];
       return NextResponse.json(
-        await store.exclusive(() => store.putChat(b.path, history, b.hash)),
+        await store.exclusive(async () => {
+          const saved = output.changed
+            ? await store.save(b.path, output.markdown!, b.hash, true)
+            : note;
+          return store.putChat(b.path, history, saved.hash);
+        }),
       );
     }
     if (["graph", "revise"].includes(b.action)) {

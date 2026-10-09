@@ -1609,6 +1609,16 @@ body {
   font-size: 10px;
   color: #7f8899;
 }
+.chat-badge {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid #4a5470;
+  border-radius: 3px;
+  background: #2b3145;
+  color: #a9b6dc;
+  font-style: normal;
+  font-size: 9.5px;
+}
 .chat-message > p {
   margin: 0;
   padding: 10px 12px;
@@ -1658,6 +1668,13 @@ body {
 }
 .chat-input textarea::placeholder {
   color: #6f798b;
+}
+.chat-hint {
+  display: block;
+  margin-top: 7px;
+  font-size: 10px;
+  color: #6f798b;
+  text-align: center;
 }
 .tag-menu {
   width: 236px;
