@@ -219,43 +219,50 @@ input:focus-visible {
   font-size: 12px;
   line-height: 1.9;
 }
-.library-menu {
-  margin: 0;
-  border-color: #454852;
-}
-.library-menu button.current,
-.library-menu button.current:disabled {
-  opacity: 1;
-  color: #cfd6e6;
-  background: #3a3d46;
-}
-.library-switch {
+/* 笔记库并排一排：点一下切换，也可以把笔记拖进来换库 */
+.library-tabs {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 7px;
-  margin-left: -7px;
-  border-radius: 6px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: #7f8899;
-  max-width: 100%;
+  padding: 0 22px 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-.library-switch:hover {
+.library-tabs::-webkit-scrollbar {
+  display: none;
+}
+.library-tab {
+  flex: 0 0 auto;
+  max-width: 120px;
+  padding: 5px 11px;
+  border: 1px solid #3a3e49;
+  border-radius: 14px;
   background: #262a32;
-  color: #c3c7d1;
-}
-.library-switch > span {
+  color: #aeb6c6;
+  font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.library-switch small {
-  color: #6f798b;
-  letter-spacing: 0;
+.library-tab:hover {
+  border-color: #55607a;
+  color: #dbe1ee;
 }
-.library-switch .flipped {
-  transform: rotate(180deg);
+.library-tab.active,
+.library-tab.active:disabled {
+  opacity: 1;
+  border-color: #657397;
+  background: #2f3446;
+  color: #e6ebf7;
+}
+.library-tab.drop {
+  border-color: #93a4cf;
+  background: #38406080;
+  color: #eef2fb;
+}
+.library-tab.gear {
+  padding: 5px 8px;
+  color: #8e97a8;
 }
 .settings-modal {
   width: min(520px, 92vw);

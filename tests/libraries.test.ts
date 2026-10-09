@@ -135,3 +135,57 @@ test("多笔记库：新建、切换、改名，各自互不影响", async () =>
   );
   await s.useLibrary(s.defaultLibrary);
 });
+
+test("把笔记和文件夹搬到另一本笔记库：图和标签跟着走，重名会拦下来", async () => {
+  await s.createLibrary("随记");
+  await s.create("随手记.md", "file");
+  let note = await s.read("随手记.md");
+  note = await s.save("随手记.md", "# 随手记\n", note.hash);
+  note = await s.putGraph(
+    "随手记.md",
+    {
+      nodes: [{ id: "a", title: "想法", content: "记一下" }],
+      edges: [],
+      sourceHash: note.hash,
+    },
+    note.hash,
+  );
+  note = await s.putAnnotation(
+    "随手记.md",
+    { quote: "# 随手记", label: "标题" },
+    note.hash,
+    note.annotationsHash,
+  );
+  await s.create("灵感", "folder");
+  await s.create("灵感/点子.md", "file");
+
+  // 搬到默认库：相对路径不变，配套元数据一起过去
+  await s.moveToLibrary("灵感", s.defaultLibrary);
+  assert.deepEqual(
+    (await s.tree()).map((entry) => entry.path),
+    ["随手记.md"],
+  );
+  await s.useLibrary(s.defaultLibrary);
+  assert.ok((await s.tree()).some((entry) => entry.path === "灵感"));
+  assert.equal((await s.read("灵感/点子.md")).content, "");
+
+  await s.useLibrary("随记");
+  await s.moveToLibrary("随手记.md", s.defaultLibrary);
+  assert.deepEqual(await s.tree(), []);
+  await s.useLibrary(s.defaultLibrary);
+  const moved = await s.read("随手记.md");
+  assert.equal(moved.content, "# 随手记\n");
+  assert.equal(moved.graph?.nodes[0].title, "想法");
+  assert.equal(moved.annotations[0].label, "标题");
+
+  // 目标库里已经有同名笔记时明确报错，不动任何一边
+  await s.useLibrary("随记");
+  await s.create("随手记.md", "file");
+  await assert.rejects(
+    () => s.moveToLibrary("随手记.md", s.defaultLibrary),
+    /已经有同名/,
+  );
+  assert.ok((await s.tree()).some((entry) => entry.path === "随手记.md"));
+  await s.useLibrary(s.defaultLibrary);
+  assert.equal((await s.read("随手记.md")).content, "# 随手记\n");
+});

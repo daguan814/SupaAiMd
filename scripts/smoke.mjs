@@ -92,25 +92,17 @@ try {
     console.log("只检查了首页（设置 SMOKE_NOTE 可以顺带打开一篇笔记）");
   }
 
-  // 笔记库：下拉能列出来，当前那本在里面（只看不动）
+  // 笔记库：并排的标签能列出来，当前那本是选中态（只看不动）
   const current = await page
-    .$eval(".library-switch > span", (node) => node.textContent)
+    .$eval(".library-tab.active", (node) => node.textContent)
     .catch(() => "");
   if (!current) failures.push("侧栏没有显示当前笔记库");
   else {
-    const menu = await open(
-      () => page.click(".library-switch"),
-      ".library-menu",
-      "笔记库下拉打不开",
+    const names = await page.$$eval(".library-tab", (nodes) =>
+      nodes.map((node) => node.textContent).filter(Boolean),
     );
-    if (menu) {
-      const names = await page.$$eval(".library-menu button span", (nodes) =>
-        nodes.map((node) => node.textContent),
-      );
-      console.log("笔记库自检:", JSON.stringify({ current, names }));
-      if (!names.includes(current)) failures.push("下拉里没有当前笔记库");
-      await page.keyboard.press("Escape");
-    }
+    console.log("笔记库自检:", JSON.stringify({ current, names }));
+    if (!names.includes(current)) failures.push("并排标签里没有当前笔记库");
   }
 
   // 回收站：面板能列出来（只看不动）

@@ -176,6 +176,34 @@ export async function renameLibrary(from: unknown, to: unknown) {
   });
   return tree();
 }
+/**
+ * 把当前笔记库里的一项搬到另一本笔记库，相对路径不变（目标库里缺哪层目录就建哪层），
+ * 配套的关系图、对话和标签一起搬过去。
+ */
+export async function moveToLibrary(relative: string, library: unknown) {
+  const target = await validLibraryName(library);
+  await init();
+  const state = await libraries();
+  if (!state.names.includes(target)) throw new UserError("没有这个笔记库", 404);
+  if (target === state.active) return tree();
+  const source = await safe(relative);
+  const files = await listFiles(relative);
+  const destination = path.join(root, target, relative);
+  if (await exists(destination))
+    throw new UserError(`「${target}」里已经有同名的笔记或文件夹`, 409);
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await fs.rename(source, destination);
+  for (const file of files) {
+    const from = await metadata(file);
+    if (!(await exists(from))) continue;
+    await fs.mkdir(path.join(root, target, ".app"), { recursive: true });
+    await fs.rename(
+      from,
+      path.join(root, target, ".app", hash(file) + ".json"),
+    );
+  }
+  return tree();
+}
 export async function safe(relative: string) {
   if (
     !relative ||

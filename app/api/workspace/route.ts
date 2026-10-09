@@ -165,6 +165,11 @@ export async function POST(request: NextRequest) {
         case "move":
           if (typeof b.to !== "string") throw new store.UserError("请求无效");
           return NextResponse.json({ tree: await store.move(b.path, b.to) });
+        case "moveToLibrary":
+          if (typeof b.to !== "string") throw new store.UserError("请求无效");
+          return NextResponse.json({
+            tree: await store.moveToLibrary(b.path, b.to),
+          });
         case "trash":
           return NextResponse.json({
             tree: await store.trash(b.path),
